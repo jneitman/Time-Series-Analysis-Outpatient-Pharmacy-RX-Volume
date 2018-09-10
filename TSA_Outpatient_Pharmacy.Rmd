@@ -1,0 +1,2058 @@
+---
+title: "Time Series Analysis: Outpatient Pharmacy RX Volume"
+author: Joel Neitman
+date: September 9, 2005
+output: rmarkdown::github_document
+---
+
+
+```{r}
+library(stats)
+library(forecast)
+library(zoo)
+library(scales)
+library(xts)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(RColorBrewer)
+library(MASS)
+library(tseries)
+```
+
+Load data and exploratory analysis
+```{r}
+MPO = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPO_totals_only.csv")
+MPCC = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPCC_totals_only.csv")
+MPLC = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPLC_totals_only.csv")
+MPDT = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPDT_totals_only.csv")
+
+#set to a calendar date format
+MPO$date = as.Date(MPO$Date, format = "%m/%d/%Y")
+MPO_DF = data.frame(date = MPO$date, Total = MPO$Total)
+
+MPCC$date = as.Date(MPCC$Date, format = "%m/%d/%Y")
+MPCC_DF = data.frame(date = MPCC$date, Total = MPCC$Total)
+
+MPLC$date = as.Date(MPLC$Date, format = "%m/%d/%Y")
+MPLC_DF = data.frame(date = MPLC$date, Total = MPLC$Total)
+
+MPDT$Date = as.Date(MPDT$Date, format = "%m/%d/%Y")
+MPDT_DF = data.frame("date" = MPDT$Date, "Total" = MPDT$Total)
+
+```
+
+Load most current data
+```{r}
+MPO_NEW = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPO_NEW.csv")
+MPCC_NEW = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPCC_NEW.csv")
+MPLC_NEW = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPLC_NEW.csv")
+
+MPO_NEW$Date = as.Date(MPO_NEW$Date, format = "%m/%d/%Y")
+MPO_DF_NEW = data.frame(date = MPO_NEW$Date, Total = MPO_NEW$Total)
+
+MPCC_NEW$Date = as.Date(MPCC_NEW$Date, format = "%m/%d/%Y")
+MPCC_DF_NEW = data.frame(date = MPCC_NEW$Date, Total = MPCC_NEW$Total)
+
+MPLC_NEW$Date = as.Date(MPLC_NEW$Date, format = "%m/%d/%Y")
+MPLC_DF_NEW = data.frame(date = MPLC_NEW$Date, Total = MPLC_NEW$Total)
+```
+
+Add in missing dates from the extractions to have a complete timeframe for each location.
+```{r}
+all_dates = seq(as.Date(as.yearmon(min(MPO_DF$date))), as.Date("2018-05-31"), by = "day")
+
+MPO_posts_by_date_clean = merge(data.frame(date = all_dates), MPO_DF, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPO_posts_by_date_clean$Total[is.na(MPO_posts_by_date_clean$Total)] = NA
+MPO_DF_Full = MPO_posts_by_date_clean
+
+MPCC_posts_by_date_clean = merge(data.frame(date = all_dates), MPCC_DF, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPCC_posts_by_date_clean$Total[is.na(MPCC_posts_by_date_clean$Total)] = NA
+MPCC_DF_Full = MPCC_posts_by_date_clean
+
+MPLC_posts_by_date_clean = merge(data.frame(date = all_dates), MPLC_DF, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPLC_posts_by_date_clean$Total[is.na(MPLC_posts_by_date_clean$Total)] = NA
+MPLC_DF_Full = MPLC_posts_by_date_clean
+
+MPDT_posts_by_date_clean = merge(data.frame(date = all_dates), MPDT_DF, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPDT_posts_by_date_clean$Total[is.na(MPDT_posts_by_date_clean$Total)] = NA
+MPDT_DF_Full = MPDT_posts_by_date_clean
+
+```
+
+Merge all old and current data; reorder levels of weekday names; make all sundays for mpo and mplc NA
+```{r}
+all_dates2 = seq(as.Date(as.yearmon(min(MPO_DF_NEW$date))), as.Date("2018-07-18"), by = "day")
+
+MPO_ALL = merge(data.frame(date = all_dates2), MPO_DF_NEW, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPO_ALL = MPO_ALL[which(MPO_ALL$date == "2018-06-01"):length(MPO_ALL$date),]
+MPO_ALL = rbind(MPO_DF_Full, MPO_ALL)
+
+MPCC_ALL = merge(data.frame(date = all_dates2), MPCC_DF_NEW, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPCC_ALL = MPCC_ALL[which(MPCC_ALL$date == "2018-06-01"):length(MPCC_ALL$date),]
+MPCC_ALL = rbind(MPCC_DF_Full, MPCC_ALL)
+
+MPLC_ALL = merge(data.frame(date = all_dates2), MPLC_DF_NEW, by.x = "date", by.y = "date", all.x = T, all.y = T)
+MPLC_ALL = MPLC_ALL[which(MPLC_ALL$date == "2018-06-01"):length(MPLC_ALL$date),]
+MPLC_ALL = rbind(MPLC_DF_Full, MPLC_ALL)
+
+MPO_DF_Full = MPO_ALL
+MPCC_DF_Full = MPCC_ALL
+MPLC_DF_Full = MPLC_ALL
+
+MPO_DF_Full$day = as.factor(weekdays(MPO_DF_Full$date))
+MPO_DF_Full$day=factor(MPO_DF_Full$day , levels=levels(MPO_DF_Full$day)[c(4,2,6,7,5,1,3)])
+MPO_DF_Full$month = as.factor(month(MPO_DF_Full$date))
+
+MPCC_DF_Full$day = as.factor(weekdays(MPCC_DF_Full$date))
+MPCC_DF_Full$day=factor(MPCC_DF_Full$day , levels=levels(MPCC_DF_Full$day)[c(4,2,6,7,5,1,3)])
+MPCC_DF_Full$month = as.factor(month(MPCC_DF_Full$date))
+
+MPLC_DF_Full$day = as.factor(weekdays(MPLC_DF_Full$date))
+MPLC_DF_Full$day=factor(MPLC_DF_Full$day , levels=levels(MPLC_DF_Full$day)[c(4,2,6,7,5,1,3)])
+MPLC_DF_Full$month = as.factor(month(MPLC_DF_Full$date))
+
+MPDT_DF_Full$day = as.factor(weekdays(MPDT_DF_Full$date))
+MPDT_DF_Full$day=factor(MPDT_DF_Full$day , levels=levels(MPDT_DF_Full$day)[c(4,2,6,7,5,1,3)])
+MPDT_DF_Full$month = as.factor(month(MPDT_DF_Full$date))
+
+MPO_DF_Full$Total[which(MPO_DF_Full$day == "Sunday")] = NA
+MPLC_DF_Full$Total[which(MPLC_DF_Full$day == "Sunday")] = NA
+```
+
+
+Remove holidays
+```{r}
+library(timeDate);library(chron)
+hlist <- c("USChristmasDay","USMemorialDay","USIndependenceDay","USLaborDay",
+    "USNewYearsDay","USThanksgivingDay")        
+myholidays  <- dates(as.character(holiday(2009:2018,hlist)),format="Y-M-D")
+MPO_DF_Full$Total[is.holiday(MPO_DF_Full$date,myholidays)] = NA
+MPO_DF_Full$Total[which(month(MPO_DF_Full$date) == 12 & day(MPO_DF_Full$date) == 24)] = NA
+
+MPCC_DF_Full$Total[is.holiday(MPCC_DF_Full$date,myholidays)] = NA
+MPCC_DF_Full$Total[which(month(MPCC_DF_Full$date) == 12 & day(MPCC_DF_Full$date) == 24)] = NA
+
+MPLC_DF_Full$Total[is.holiday(MPLC_DF_Full$date,myholidays)] = NA
+MPLC_DF_Full$Total[which(month(MPLC_DF_Full$date) == 12 & day(MPLC_DF_Full$date) == 24)] = NA
+
+MPDT_DF_Full$Total[is.holiday(MPDT_DF_Full$date,myholidays)] = NA
+MPDT_DF_Full$Total[which(month(MPDT_DF_Full$date) == 12 & day(MPDT_DF_Full$date) == 24)] = NA
+
+```
+
+
+Plot all data starting from 2009 -- scatterplot
+```{r}
+
+plot(MPO_DF_Full$Total, pch = 20, cex = .6, xaxt = "n", yaxt = "n", bty = "n", ylab = "Total", xlab = "", cex.lab = .9)
+axis(1, lty = 0, at = seq(0,3288,365),labels = c("'09", "'10", "'11", "'12", "'13", "'14", "'15", "'16", "'17", "'18"), cex.axis = .7)
+axis(2, cex.axis = .7, lty = 1, las = 2)
+axis(2, col = "white", tck = 0, labels = F)
+title(main = "Location #1 Daily RX Totals Between 1/1/2009 and 7/18/2018", cex.main = .8)
+abline(v = seq(1, 3287, 365), col = alpha("blue", .7), lty = 2)
+# text(-90,333, labels = "a.", cex = .8, font = 2)
+
+plot(MPCC_DF_Full$Total, pch = 20, cex = .6, xaxt = "n", yaxt = "n", bty = "n", ylab = "Total", xlab = "", cex.lab = .9)
+axis(1, lty = 0, at = seq(0,3288,365),labels = c("'09", "'10", "'11", "'12", "'13", "'14", "'15", "'16", "'17", "'18"), cex.axis = .7)
+axis(2, cex.axis = .7, lty = 1, las = 2)
+axis(2, col = "white", tck = 0, labels = F)
+title(main = "Location #2 Daily RX Totals Between 1/1/2009 and 7/18/2018", cex.main = .8)
+abline(v = seq(1, 3287, 365), col = alpha("blue", .7), lty = 2)
+# text(-90,619, labels = "b.", cex = .8, font = 2)
+
+
+plot(MPLC_DF_Full$Total, pch = 20, cex = .6, xaxt = "n", yaxt = "n", bty = "n", ylab = "Total", xlab = "Time (Days per Year)", cex.lab = .9)
+axis(1, lty = 0, at = seq(0,3288,365),labels = c("'09", "'10", "'11", "'12", "'13", "'14", "'15", "'16", "'17", "'18"), cex.axis = .7)
+axis(2, cex.axis = .7, lty = 1, las = 2)
+axis(2, col = "white", tck = 0, labels = F)
+title(main = "Location #3 Daily RX Totals Between 1/1/2009 and 7/18/2018", cex.main = .8)
+abline(v = seq(1, 3287, 365), col = alpha("blue", .7), lty = 2)
+# text(-90,580, labels = "c.", cex = .8, font = 2)
+
+```
+
+
+Plot data from 2016 to 2018 then plot data from the start of 2018 -- line
+```{r}
+par(mfrow = c(2,1))
+MPO.16 = MPO_DF_Full[which(MPO_DF_Full$date == "2016-01-01"):length(MPO_DF_Full$date),]
+plot(MPO.16$Total ~ MPO.16$date, type = "line", bty = "n", xlab = "Time (day per year)", yaxt = "n", xaxt = "n", ylab = "Total", ylim = c(0,300), lwd = 1, cex.axis = .8)
+axis(2, las = 2, labels = T, cex.axis = .6)
+axis(2, col = "white", tck = 0, labels = F)
+axis(1, col = "white", tck = 0, labels = c("2016", "2017", "2018"), at = c(16801,17166,17532), cex.axis = .8)
+abline(v = c(16801,17166,17532), lty = 2, col = alpha("blue", .7))
+title(main = "Location #1 RX Totals Since 2016", cex.main = .8, cex.sub = .6)
+
+MPO.18 = MPO_DF_Full[which(MPO_DF_Full$date == "2018-01-01"):length(MPO_DF_Full$date),]
+plot(MPO.18$Total ~ MPO.18$date, type = "line", bty = "n", xlab = "Time (day per month)", ylab = "Total", ylim = c(0,200), lwd = 2, cex.axis = .8, xaxt = "n", yaxt = "n")
+axis(2, las = 2, labels = T, cex.axis = .6)
+axis(2, col = "white", tck = 0, labels = F)
+axis(1, col = "white", tck = 0, labels = c("Jan", "Feb", "Mar", "Apr", "May","Jun","Jul"), at = c(17532,17563,17591,17622,17652,17683,17713), cex.axis = .8)
+abline(v = c(17532,17563,17591,17622,17652,17683,17713), lty = 2, col = alpha("blue", .7))
+title(main = "Location #1 RX Totals in 2018", cex.main = .8, cex.sub = .6)
+
+
+par(mfrow = c(2,1))
+MPCC.16 = MPCC_DF_Full[which(MPCC_DF_Full$date == "2016-01-01"):length(MPCC_DF_Full$date),]
+plot(MPCC.16$Total ~ MPCC.16$date, type = "line", bty = "n", xlab = "Time (day per year)", yaxt = "n", xaxt = "n", ylab = "Total", ylim = c(0,600), lwd = 1, cex.axis = .8)
+axis(2, las = 2, labels = T, cex.axis = .6)
+axis(2, col = "white", tck = 0, labels = F)
+axis(1, col = "white", tck = 0, labels = c("2016", "2017", "2018"), at = c(16801,17166,17532), cex.axis = .8)
+abline(v = c(16801,17166,17532), lty = 2, col = alpha("blue", .7))
+title(main = "Location #2 RX Totals Since 2016", cex.main = .8, cex.sub = .6)
+
+MPCC.18 = MPCC_DF_Full[which(MPCC_DF_Full$date == "2018-01-01"):length(MPCC_DF_Full$date),]
+plot(MPCC.18$Total ~ MPCC.18$date, type = "line", bty = "n", xlab = "Time (day per month)", ylab = "Total", ylim = c(0,600), lwd = 2, cex.axis = .8, xaxt = "n", yaxt = "n")
+axis(2, las = 2, labels = T, cex.axis = .6)
+axis(2, col = "white", tck = 0, labels = F)
+axis(1, col = "white", tck = 0, labels = c("Jan", "Feb", "Mar", "Apr", "May","Jun","Jul"), at = c(17532,17563,17591,17622,17652,17683,17713), cex.axis = .8)
+abline(v = c(17532,17563,17591,17622,17652,17683,17713), lty = 2, col = alpha("blue", .7))
+title(main = "Location #2 RX Totals in 2018", cex.main = .8, cex.sub = .6)
+
+
+
+
+par(mfrow = c(2,1))
+MPLC.16 = MPLC_DF_Full[which(MPLC_DF_Full$date == "2016-01-01"):length(MPLC_DF_Full$date),]
+plot(MPLC.16$Total ~ MPLC.16$date, type = "line", bty = "n", xlab = "Time (day per year)", yaxt = "n", xaxt = "n", ylab = "Total", ylim = c(0,500), lwd = 1, cex.axis = .8)
+axis(2, las = 2, labels = T, cex.axis = .6)
+axis(2, col = "white", tck = 0, labels = F)
+axis(1, col = "white", tck = 0, labels = c("2016", "2017", "2018"), at = c(16801,17166,17532), cex.axis = .8)
+abline(v = c(16801,17166,17532), lty = 2, col = alpha("blue", .7))
+title(main = "Location #3 RX Totals Since 2016", cex.main = .8, cex.sub = .6)
+
+MPLC.18 = MPLC_DF_Full[which(MPLC_DF_Full$date == "2018-01-01"):length(MPLC_DF_Full$date),]
+plot(MPLC.18$Total ~ MPLC.18$date, type = "line", bty = "n", xlab = "Time (day per month)", yaxt = "n", ylab = "Total", ylim = c(0,500), lwd = 2, cex.axis = .8, xaxt = "n")
+axis(2, las = 2, labels = T, cex.axis = .6)
+axis(2, col = "white", tck = 0, labels = F)
+axis(1, col = "white", tck = 0, labels = c("Jan", "Feb", "Mar", "Apr", "May","Jun","Jul"), at = c(17532,17563,17591,17622,17652,17683,17713), cex.axis = .8)
+abline(v = c(17532,17563,17591,17622,17652,17683,17713), lty = 2, col = alpha("blue", .7))
+title(main = "Location #3 RX Totals in 2018", cex.main = .8, cex.sub = .6)
+```
+
+Plot data grouped by MONTH & YEAR up until 7/18/2018 -- boxplots
+```{r}
+par(mar = c(4, 4, 1.5,1.5))
+boxplot(MPO_DF_Full$Total ~ month(MPO_DF_Full$date) + year(MPO_DF_Full$date), medpch = 20, medlty = 0, boxlty = 0, whisklty = 1, whisklwd = 1.8, staplelty = 0, frame.plot = F, ylab = "Total", ylim = c(0,350), xlim = c(0,130), xaxt = "n", yaxt = "n", cex = .8, main = "Location #1 Monthly RX Totals Between 1/1/2009 and 7/18/2018", cex.main = .9, xlab = "Time (Months per Year)", outline = T, outcol = "gray", outpch = 20, outcex = .4)
+axis(1, lty = 0, labels = c("'09", "'10", "'11", "'12", "'13", "'14", "'15", "'16", "'17", "'18"), at = seq(1, 113, 12), cex.axis = 0.7, pos = 1)
+axis(2, labels = F)
+axis(2, las = 2, cex.axis = .7, col = "white", tck = 0)
+abline(v = seq(1, 120, 12), col = alpha("blue", .7), lty = 2)
+abline(v = 103, col = alpha("red", .7))
+legend(85,364, legend = c("New year", "Epic"), col = c(alpha("blue", .8), alpha("red", .8)), lty = c(2,1), cex = .8, box.lty = 0, ncol = 1, xpd = T)
+#outliers removed
+
+dat1 = data.frame("date" = MPO_DF_Full$date[which(year(MPO_DF_Full$date) == 2015)], value = MPO_DF_Full$Total[which(year(MPO_DF_Full$date) == 2015)])
+dat2 = data.frame("date" = MPO_DF_Full$date[which(year(MPO_DF_Full$date) == 2016)], value = MPO_DF_Full$Total[which(year(MPO_DF_Full$date) == 2016)])
+dat22 = data.frame("date" = MPO_DF_Full$date[which(year(MPO_DF_Full$date) == 2017)], value = MPO_DF_Full$Total[which(year(MPO_DF_Full$date) == 2017)])
+dat3 = rbind(dat1,dat2,dat22)
+dat3 = aggregate(dat3$value~month(dat3$date) + year(dat3$date),FUN = sum)
+ggplot(dat3) + geom_bar(aes(x = dat3$`month(dat3$date)`, y = dat3$`dat3$value`, fill = as.factor(dat3$`year(dat3$date)`)), stat = "identity", position = "dodge", width = .6) +
+  scale_x_discrete(limits = seq(1,12,1), labels = month.abb) +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = .5)
+  ) +
+  labs(x ="", y="Total") +
+  scale_fill_manual(name = "Year", values = c("coral", "cornflowerblue", "chartreuse3"))+
+  ggtitle("Month Totals per Year: Location #1")
+
+par(mar = c(4, 4, 1.5,1.5))
+boxplot(MPCC_DF_Full$Total ~ month(MPCC_DF_Full$date) + year(MPCC_DF_Full$date), medpch = 20, medlty = 0, boxlty = 0, whisklty = 1, whisklwd = 1.8, staplelty = 0, frame.plot = F, ylab = "Total", ylim = c(0,650), xlim = c(0,130), xaxt = "n", yaxt = "n", cex = .8, main = "Location #2 Monthly RX Totals Between 1/1/2009 and 7/18/2018", cex.main = .9, xlab = "Time (Months per Year)", outline = T, outcol = "gray", outpch = 20, outcex = .4)
+axis(1, lty = 0, labels = c("'09", "'10", "'11", "'12", "'13", "'14", "'15", "'16", "'17", "'18"), at = seq(1, 113, 12), cex.axis = 0.7, pos = 1)
+axis(2, labels = F)
+axis(2, las = 2, cex.axis = .7, col = "white", tck = 0)
+abline(v = seq(1, 120, 12), col = alpha("blue", .7), lty = 2)
+abline(v = 103, col = alpha("red", .7))
+legend(85,680, legend = c("New year", "Epic"), col = c(alpha("blue", .8), alpha("red", .8)), lty = c(2,1), cex = .8, box.lty = 0, ncol = 1, xpd = T)
+#outliers removed
+
+dat1 = data.frame("date" = MPCC_DF_Full$date[which(year(MPCC_DF_Full$date) == 2015)], value = MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) == 2015)])
+dat2 = data.frame("date" = MPCC_DF_Full$date[which(year(MPCC_DF_Full$date) == 2016)], value = MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) == 2016)])
+dat22 = data.frame("date" = MPCC_DF_Full$date[which(year(MPCC_DF_Full$date) == 2017)], value = MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) == 2017)])
+dat3 = rbind(dat1,dat2,dat22)
+dat3 = aggregate(dat3$value~month(dat3$date) + year(dat3$date),FUN = sum)
+ggplot(dat3) + geom_bar(aes(x = dat3$`month(dat3$date)`, y = dat3$`dat3$value`, fill = as.factor(dat3$`year(dat3$date)`)), stat = "identity", position = "dodge", width = .6) +
+  scale_x_discrete(limits = seq(1,12,1), labels = month.abb) +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = .5)
+  ) +
+  labs(x ="", y="Total") +
+  scale_fill_manual(name = "Year", values = c("coral", "cornflowerblue", "chartreuse3"))+
+  ggtitle("Month Totals per Year: Location #2")
+
+par(mar = c(4, 4, 1.5,1.5))
+boxplot(MPLC_DF_Full$Total ~ month(MPLC_DF_Full$date) + year(MPLC_DF_Full$date), medpch = 20, medlty = 0, boxlty = 0, whisklty = 1, whisklwd = 1.8, staplelty = 0, frame.plot = F, ylab = "Total", ylim = c(0,600), xlim = c(0,130), xaxt = "n", yaxt = "n", cex = .8, main = "Location #3 Monthly RX Totals Between 1/1/2009 and 7/18/2018", cex.main = .9, xlab = "Time (Months per Year)", outline = T, outcol = "gray", outpch = 20, outcex = .4)
+axis(1, lty = 0, labels = c("'09", "'10", "'11", "'12", "'13", "'14", "'15", "'16", "'17", "'18"), at = seq(1, 113, 12), cex.axis = 0.7, pos = 1)
+axis(2, labels = F)
+axis(2, las = 2, cex.axis = .7, col = "white", tck = 0)
+abline(v = seq(1, 120, 12), col = alpha("blue", .7), lty = 2)
+abline(v = 103, col = alpha("red", .7))
+legend(85,630, legend = c("New year", "Epic"), col = c(alpha("blue", .8), alpha("red", .8)), lty = c(2,1), cex = .8, box.lty = 0, ncol = 1, xpd = T)
+#outliers removed
+
+
+dat1 = data.frame("date" = MPLC_DF_Full$date[which(year(MPLC_DF_Full$date) == 2015)], value = MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) == 2015)])
+dat2 = data.frame("date" = MPLC_DF_Full$date[which(year(MPLC_DF_Full$date) == 2016)], value = MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) == 2016)])
+dat22 = data.frame("date" = MPLC_DF_Full$date[which(year(MPLC_DF_Full$date) == 2017)], value = MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) == 2017)])
+dat3 = rbind(dat1,dat2,dat22)
+dat3 = aggregate(dat3$value~month(dat3$date) + year(dat3$date),FUN = sum)
+
+ggplot(dat3) + geom_bar(aes(x = dat3$`month(dat3$date)`, y = dat3$`dat3$value`, fill = as.factor(dat3$`year(dat3$date)`)), stat = "identity", position = "dodge", width = .6) +
+  scale_x_discrete(limits = seq(1,12,1), labels = month.abb) +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = .5)
+  ) +
+  labs(x ="", y="Total") +
+  scale_fill_manual(name = "Year", values = c("coral", "cornflowerblue", "chartreuse3"))+
+  ggtitle("Month Totals per Year: Location #3")
+
+
+```
+
+
+Plot data grouped by MONTH up until the end of 2017 -- boxplots
+```{r}
+mylabs = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+MPO_month_box = ggplot(MPO_DF_Full[which(MPO_DF_Full$date <= "2017-12-31"),], aes(x = month, y = Total, group = month)) + geom_boxplot(outlier.size = .9, outlier.color = NA, na.rm = T)
+MPO_month_box = MPO_month_box + scale_x_discrete("", limit = seq(1,12,1), labels = mylabs)
+MPO_month_box = MPO_month_box + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank()
+)
+MPO_month_box = MPO_month_box + ggtitle("Location #1 RX Total Plot per Month Between 2009 to 2017") + theme(
+  plot.title = element_text(hjust = .5, vjust = -4, size = 15, face = "bold"),
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_text(face = "bold", size = 12),
+  axis.text.y = element_text(face = "bold", size = 10)
+  )
+#outliers removed
+
+MPO_month_box
+
+
+MPCC_month_box = ggplot(MPCC_DF_Full[which(MPO_DF_Full$date <= "2017-12-31"),], aes(x = month, y = Total, group = month)) + geom_boxplot(outlier.size = .9, outlier.color = NA, na.rm = T)
+MPCC_month_box = MPCC_month_box + scale_x_discrete("", limit = seq(1,12,1), labels = mylabs)
+MPCC_month_box = MPCC_month_box + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank()
+)
+MPCC_month_box = MPCC_month_box + ggtitle("Location #2 RX Total Plot per Month Between 2009 to 2017") + theme(
+  plot.title = element_text(hjust = .5, vjust = -4, size = 15, face = "bold"),
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_text(face = "bold", size = 12),
+  axis.text.y = element_text(face = "bold", size = 10)
+  )
+#outliers removed
+
+MPCC_month_box
+
+MPLC_month_box = ggplot(MPLC_DF_Full[which(MPO_DF_Full$date <= "2017-12-31"),], aes(x = month, y = Total, group = month)) + geom_boxplot(outlier.size = .9, outlier.color = NA, na.rm = T)
+MPLC_month_box = MPLC_month_box + scale_x_discrete("", limit = seq(1,12,1), labels = mylabs)
+MPLC_month_box = MPLC_month_box + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank()
+)
+MPLC_month_box = MPLC_month_box + ggtitle("Location #3 RX Total Plot per Month Between 2009 to 2017") + theme(
+  plot.title = element_text(hjust = .5, vjust = -4, size = 15, face = "bold"),
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_text(face = "bold", size = 12),
+  axis.text.y = element_text(face = "bold", size = 10)
+  )
+#outliers removed
+
+MPLC_month_box
+
+```
+
+
+Plot data grouped by DAY up until the end of 2017 -- boxplots
+```{r}
+library(kableExtra)
+#MPO
+MPO_month_box_week = ggplot(MPO_DF_Full, aes(x = day, y = Total, group = day)) + geom_point(aes(color = day), alpha = .2, position = "jitter", na.rm = T) + geom_boxplot(outlier.size = 1.5, alpha = .4, outlier.colour = "black", na.rm = T)
+MPO_month_box_week = MPO_month_box_week + theme(
+  panel.background = element_blank(),
+  axis.title.x = element_blank()
+) 
+MPO_month_box_week = MPO_month_box_week + ggtitle("Location #1 RX Total Plot per Day Between 1/1/2009 and 7/18/2018") + theme(
+  plot.title = element_text(hjust = .5, vjust = -4, size = 11, face = "bold"),
+  axis.ticks.x = element_blank()
+  )
+
+MPO_month_box_week + theme(legend.position = "none")
+
+ggplot(MPO_DF_Full[which(year(MPLC_DF_Full$date) >= 2017),], aes(x = as.factor(day))) + geom_boxplot(aes(y=Total), na.rm = T, outlier.size = 1.5, alpha = .4, outlier.colour = "black") +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(size = 10, hjust = .5, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(face = "bold", size = 9)
+  ) +
+  labs(x = "") +
+  ggtitle("Location #1 RX Total Plot per Day Between 1/1/2017 and 7/18/2018") 
+# +   
+#   geom_point(aes(y=Total, color = day), alpha = .2, position = "jitter", na.rm = T) 
+
+
+
+#MPCC
+MPCC_month_box_week = ggplot(MPCC_DF_Full, aes(x = day, y = Total, group = day))+ geom_point(aes(color = day), alpha = .2, position = "jitter", na.rm = T) + geom_boxplot(outlier.size = 1.5, alpha = .4, outlier.colour = "black", na.rm = T)
+MPCC_month_box_week = MPCC_month_box_week + theme(
+  panel.background = element_blank(),
+  axis.title.x = element_blank()
+)
+MPCC_month_box_week = MPCC_month_box_week + ggtitle("Location #2 RX Total Plot per Day Between 1/1/2009 and 7/18/2018") + theme(
+  plot.title = element_text(hjust = .5, vjust = -4, size = 11, face = "bold"),
+  axis.ticks.x = element_blank()
+  )
+
+MPCC_month_box_week+ theme(legend.position = "none")
+
+ggplot(MPCC_DF_Full[which(year(MPLC_DF_Full$date) >= 2017),], aes(x = as.factor(day))) + geom_boxplot(aes(y=Total), na.rm = T, outlier.size = 1.5, alpha = .4, outlier.colour = "black") +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(size = 10, hjust = .5, face = "bold"),
+    legend.position = "none",
+        axis.text.x = element_text(face = "bold", size = 9)
+  ) +
+  labs(x = "") +
+  ggtitle("Location #2 RX Total Plot per Day Between 1/1/2017 and 7/18/2018")
+# +   
+#   geom_point(aes(y=Total, color = day), alpha = .2, position = "jitter", na.rm = T)
+
+
+#MPLC
+MPLC_month_box_week = ggplot(MPLC_DF_Full, aes(x = day, y = Total, group = day))+ geom_point(aes(color = day), alpha = .2, position = "jitter", na.rm = T) + geom_boxplot(outlier.size = 1.5, alpha = .4, outlier.colour = "black", na.rm = T)
+MPLC_month_box_week = MPLC_month_box_week + theme(
+  panel.background = element_blank(),
+  axis.title.x = element_blank()
+)
+MPLC_month_box_week = MPLC_month_box_week + ggtitle("Location #3 RX Total Plot per Day Between 1/1/2009 and 7/18/2018") + theme(
+  plot.title = element_text(hjust = .5, vjust = -4, size = 11, face = "bold"),
+  axis.ticks.x = element_blank()
+  )
+
+
+MPLC_month_box_week + theme(legend.position = "none")
+
+ggplot(MPLC_DF_Full[which(year(MPLC_DF_Full$date) >= 2017),], aes(x = as.factor(day))) + geom_boxplot(aes(y=Total), na.rm = T, outlier.size = 1.5, alpha = .4, outlier.colour = "black") +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(size = 10, hjust = .5, face = "bold"),
+    legend.position = "none",
+        axis.text.x = element_text(face = "bold", size = 9)
+
+  ) +
+  labs(x = "") +
+  ggtitle("Location #3 RX Total Plot per Day Between 1/1/2017 and 7/18/2018")
+
+
+```
+
+```{r}
+paste("MPO MON:", median(MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2017 & MPO_DF_Full$day == "Monday")], na.rm = T))
+paste("MPCC MON:", median(MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2017 & MPCC_DF_Full$day == "Monday")], na.rm = T))
+paste("MPLC MON:", median(MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) >= 2017 & MPLC_DF_Full$day == "Monday")], na.rm = T))
+paste('')
+paste("MPO TUE:", median(MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2017 & MPO_DF_Full$day == "Tuesday")], na.rm = T))
+paste("MPCC TUE:", median(MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2017 & MPCC_DF_Full$day == "Tuesday")], na.rm = T))
+paste("MPLC TUE:", median(MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) >= 2017 & MPLC_DF_Full$day == "Tuesday")], na.rm = T))
+paste('')
+paste("MPO WED:", median(MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2017 & MPO_DF_Full$day == "Wednesday")], na.rm = T))
+paste("MPCC WED:", median(MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2017 & MPCC_DF_Full$day == "Wednesday")], na.rm = T))
+paste("MPLC WED:", median(MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) >= 2017 & MPLC_DF_Full$day == "Wednesday")], na.rm = T))
+paste('')
+paste("MPO THU:", median(MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2017 & MPO_DF_Full$day == "Thursday")], na.rm = T))
+paste("MPCC THU:", median(MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2017 & MPCC_DF_Full$day == "Thursday")], na.rm = T))
+paste("MPLC THU:", median(MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) >= 2017 & MPLC_DF_Full$day == "Thursday")], na.rm = T))
+paste('')
+paste("MPO FRI:", median(MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2017 & MPO_DF_Full$day == "Friday")], na.rm = T))
+paste("MPCC FRI:", median(MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2017 & MPCC_DF_Full$day == "Friday")], na.rm = T))
+paste("MPLC FRI:", median(MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) >= 2017 & MPLC_DF_Full$day == "Friday")], na.rm = T))
+```
+
+Identify all outliers and boldface days after a holiday
+```{r}
+MPO_mon_out = boxplot(MPO_DF_Full$Total[which(MPO_DF_Full$day == "Monday")], plot = F)$out
+MPO_MON_OUT_df = data.frame("Date" = MPO_DF_Full$date[which(MPO_DF_Full$Total %in% MPO_mon_out & MPO_DF_Full$day == "Monday")], "Total" = MPO_mon_out)
+MPO_MON_OUT_df = MPO_MON_OUT_df[order(MPO_MON_OUT_df$Total, decreasing = T),]
+
+
+MPO_tues_out = boxplot(MPO_DF_Full$Total[which(MPO_DF_Full$day == "Tuesday")], plot = F)$out
+MPO_TUE_OUT_df = data.frame("Date" = MPO_DF_Full$date[which(MPO_DF_Full$Total %in% MPO_tues_out & MPO_DF_Full$day == "Tuesday")], "Total" = MPO_tues_out)
+MPO_TUE_OUT_df = MPO_TUE_OUT_df[order(MPO_TUE_OUT_df$Total, decreasing = T),]
+
+
+MPO_wed_out = boxplot(MPO_DF_Full$Total[which(MPO_DF_Full$day == "Wednesday")], plot = F)$out
+MPO_WED_OUT_df = data.frame("Date" = MPO_DF_Full$date[which(MPO_DF_Full$Total %in% MPO_wed_out & MPO_DF_Full$day == "Wednesday")], "Total" = MPO_wed_out)
+MPO_WED_OUT_df = MPO_WED_OUT_df[order(MPO_WED_OUT_df$Total, decreasing = T),]
+
+
+MPO_thurs_out = boxplot(MPO_DF_Full$Total[which(MPO_DF_Full$day == "Thursday")], plot = F)$out
+MPO_THU_OUT_df = data.frame("Date" = MPO_DF_Full$date[which(MPO_DF_Full$Total %in% MPO_thurs_out & MPO_DF_Full$day == "Thursday")], "Total" = MPO_thurs_out)
+MPO_THU_OUT_df = MPO_THU_OUT_df[order(MPO_THU_OUT_df$Total, decreasing = T),]
+
+
+MPO_fri_out = boxplot(MPO_DF_Full$Total[which(MPO_DF_Full$day == "Friday")], plot = F)$out
+MPO_FRI_OUT_df = data.frame("Date" = MPO_DF_Full$date[which(MPO_DF_Full$Total %in% MPO_fri_out & MPO_DF_Full$day == "Friday")], "Total" = MPO_fri_out)
+MPO_FRI_OUT_df = MPO_FRI_OUT_df[order(MPO_FRI_OUT_df$Total, decreasing = T),]
+
+MPO_OUT = rbind(MPO_MON_OUT_df, MPO_TUE_OUT_df, MPO_WED_OUT_df, MPO_THU_OUT_df, MPO_FRI_OUT_df)
+MPO_OUT = MPO_OUT[order(month(MPO_OUT$Date),day(MPO_OUT$Date), year(MPO_OUT$Date)),]
+MPO_OUT$day = weekdays(MPO_OUT$Date)
+MPO_OUT = data.frame("Date" = MPO_OUT$Date, "Day" = MPO_OUT$day, "Total" = MPO_OUT$Total)
+kable(MPO_OUT, format = "html") %>%
+  kable_styling(bootstrap_options = c("basic"), full_width = F) %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==1)), background = "#DA70D6", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==2)), background = "#FFA500", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==3)), background = "#F0E68C", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==4)), background = "#C0C0C0", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==5)), background = "#9ACD32", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==6)), background = "lightskyblue", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==7)), background = "#FFA07A", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==8)), background = "#B0E0E6", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==9)), background = "#FFD700", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==10)), background = "#B0C4DE", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==11)), background = "#FFDAB9", color = "gray47") %>%
+  row_spec(., c(which(month(MPO_OUT$Date)==12)), background = "#00FA9A", color = "gray47") %>%
+  row_spec(., row = c(1:4, 17:22, 29:31, 34:37, 42:44), bold = T, color = "black") %>%
+  row_spec(., row = 45, bold = T, color = "red")
+
+
+
+MPCC_mon_out = boxplot(MPCC_DF_Full$Total[which(MPCC_DF_Full$day == "Monday")], plot = F)$out
+MPCC_MON_OUT_df = data.frame("Date" = MPCC_DF_Full$date[which(MPCC_DF_Full$Total %in% MPCC_mon_out & MPCC_DF_Full$day == "Monday")], "Total" = MPCC_mon_out)
+MPCC_MON_OUT_df = MPCC_MON_OUT_df[order(MPCC_MON_OUT_df$Total, decreasing = T),]
+
+
+MPCC_tues_out = boxplot(MPCC_DF_Full$Total[which(MPCC_DF_Full$day == "Tuesday")], plot = F)$out
+MPCC_TUE_OUT_df = data.frame("Date" = MPCC_DF_Full$date[which(MPCC_DF_Full$Total %in% MPCC_tues_out & MPCC_DF_Full$day == "Tuesday")], "Total" = MPCC_tues_out)
+MPCC_TUE_OUT_df = MPCC_TUE_OUT_df[order(MPCC_TUE_OUT_df$Total, decreasing = T),]
+
+
+MPCC_wed_out = boxplot(MPCC_DF_Full$Total[which(MPCC_DF_Full$day == "Wednesday")], plot = F)$out
+MPCC_WED_OUT_df = data.frame("Date" = MPCC_DF_Full$date[which(MPCC_DF_Full$Total %in% MPCC_wed_out & MPCC_DF_Full$day == "Wednesday")], "Total" = MPCC_wed_out)
+MPCC_WED_OUT_df = MPCC_WED_OUT_df[order(MPCC_WED_OUT_df$Total, decreasing = T),]
+
+
+MPCC_thurs_out = boxplot(MPCC_DF_Full$Total[which(MPCC_DF_Full$day == "Thursday")], plot = F)$out
+MPCC_THU_OUT_df = data.frame("Date" = MPCC_DF_Full$date[which(MPCC_DF_Full$Total %in% MPCC_thurs_out & MPCC_DF_Full$day == "Thursday")], "Total" = MPCC_thurs_out)
+MPCC_THU_OUT_df = MPCC_THU_OUT_df[order(MPCC_THU_OUT_df$Total, decreasing = T),]
+
+
+MPCC_fri_out = boxplot(MPCC_DF_Full$Total[which(MPCC_DF_Full$day == "Friday")], plot = F)$out
+MPCC_FRI_OUT_df = data.frame("Date" = MPCC_DF_Full$date[which(MPCC_DF_Full$Total %in% MPCC_fri_out & MPCC_DF_Full$day == "Friday")], "Total" = MPCC_fri_out)
+MPCC_FRI_OUT_df = MPCC_FRI_OUT_df[order(MPCC_FRI_OUT_df$Total, decreasing = T),]
+
+MPCC_OUT = rbind(MPCC_MON_OUT_df, MPCC_TUE_OUT_df, MPCC_WED_OUT_df, MPCC_THU_OUT_df, MPCC_FRI_OUT_df)
+MPCC_OUT = MPCC_OUT[order(month(MPCC_OUT$Date),day(MPCC_OUT$Date), year(MPCC_OUT$Date)),]
+MPCC_OUT$day = weekdays(MPCC_OUT$Date)
+MPCC_OUT = data.frame("Date" = MPCC_OUT$Date, "Day" = MPCC_OUT$day, "Total" = MPCC_OUT$Total)
+kable(MPCC_OUT, format = "html") %>%
+  kable_styling(bootstrap_options = c("basic"), full_width = F) %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==1)), background = "#DA70D6", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==3)), background = "#F0E68C", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==5)), background = "#9ACD32", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==6)), background = "lightskyblue", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==7)), background = "#FFA07A", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==8)), background = "#B0E0E6", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==9)), background = "#FFD700", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==10)), background = "#B0C4DE", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==11)), background = "#FFDAB9", color = "gray47") %>%
+  row_spec(., c(which(month(MPCC_OUT$Date)==12)), background = "#00FA9A", color = "gray47") %>%
+  row_spec(., row = c(1:4, 8:11, 13, 18:21, 24:25), bold = T, color = "black") %>%
+  row_spec(., row = c(26,27), bold = T, color = "red")
+
+
+
+MPLC_mon_out = boxplot(MPLC_DF_Full$Total[which(MPLC_DF_Full$day == "Monday")], plot = F)$out
+MPLC_MON_OUT_df = data.frame("Date" = MPLC_DF_Full$date[which(MPLC_DF_Full$Total %in% MPLC_mon_out & MPLC_DF_Full$day == "Monday")], "Total" = MPLC_mon_out)
+MPLC_MON_OUT_df = MPLC_MON_OUT_df[order(MPLC_MON_OUT_df$Total, decreasing = T),]
+
+
+MPLC_tues_out = boxplot(MPLC_DF_Full$Total[which(MPLC_DF_Full$day == "Tuesday")], plot = F)$out
+MPLC_TUE_OUT_df = data.frame("Date" = MPLC_DF_Full$date[which(MPLC_DF_Full$Total %in% MPLC_tues_out & MPLC_DF_Full$day == "Tuesday")], "Total" = MPLC_tues_out)
+MPLC_TUE_OUT_df = MPLC_TUE_OUT_df[order(MPLC_TUE_OUT_df$Total, decreasing = T),]
+
+
+MPLC_wed_out = boxplot(MPLC_DF_Full$Total[which(MPLC_DF_Full$day == "Wednesday")], plot = F)$out
+MPLC_WED_OUT_df = data.frame("Date" = MPLC_DF_Full$date[which(MPLC_DF_Full$Total %in% MPLC_wed_out & MPLC_DF_Full$day == "Wednesday")], "Total" = MPLC_wed_out)
+MPLC_WED_OUT_df = MPLC_WED_OUT_df[order(MPLC_WED_OUT_df$Total, decreasing = T),]
+
+
+MPLC_thurs_out = boxplot(MPLC_DF_Full$Total[which(MPLC_DF_Full$day == "Thursday")], plot = F)$out
+MPLC_THU_OUT_df = data.frame("Date" = MPLC_DF_Full$date[which(MPLC_DF_Full$Total %in% MPLC_thurs_out & MPLC_DF_Full$day == "Thursday")], "Total" = MPLC_thurs_out)
+MPLC_THU_OUT_df = MPLC_THU_OUT_df[order(MPLC_THU_OUT_df$Total, decreasing = T),]
+
+
+MPLC_fri_out = boxplot(MPLC_DF_Full$Total[which(MPLC_DF_Full$day == "Friday")], plot = F)$out
+MPLC_FRI_OUT_df = data.frame("Date" = MPLC_DF_Full$date[which(MPLC_DF_Full$Total %in% MPLC_fri_out & MPLC_DF_Full$day == "Friday")], "Total" = MPLC_fri_out)
+MPLC_FRI_OUT_df = MPLC_FRI_OUT_df[order(MPLC_FRI_OUT_df$Total, decreasing = T),]
+
+MPLC_OUT = rbind(MPLC_MON_OUT_df, MPLC_TUE_OUT_df, MPLC_WED_OUT_df, MPLC_THU_OUT_df, MPLC_FRI_OUT_df)
+MPLC_OUT = MPLC_OUT[order(month(MPLC_OUT$Date),day(MPLC_OUT$Date), year(MPLC_OUT$Date)),]
+MPLC_OUT$day = weekdays(MPLC_OUT$Date)
+MPLC_OUT = data.frame("Date" = MPLC_OUT$Date, "Day" = MPLC_OUT$day, "Total" = MPLC_OUT$Total)
+kable(MPLC_OUT, format = "html") %>%
+  kable_styling(bootstrap_options = c("basic"), full_width = F) %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==1)), background = "#DA70D6", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==5)), background = "#9ACD32", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==6)), background = "lightskyblue", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==7)), background = "#FFA07A", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==8)), background = "#B0E0E6", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==9)), background = "#FFD700", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==10)), background = "#B0C4DE", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==11)), background = "#FFDAB9", color = "gray47") %>%
+  row_spec(., c(which(month(MPLC_OUT$Date)==12)), background = "#00FA9A", color = "gray47") %>%
+  row_spec(., row = c(1:5, 10:17, 19:21, 36:42, 60:62), bold = T, color = "black") %>%
+  row_spec(., row = c(63:67), bold = T, color = "red")
+
+
+
+
+```
+
+```{r}
+
+after_memorial = myholidays[which(month(myholidays) == 5)] + 1
+after_labor = myholidays[which(month(myholidays) == 9)] + 1
+after_new = myholidays[which(month(myholidays) == 1)] + 1
+
+df = data.frame("Date" = 1:10, "Memorial_Day" = MPO_DF_Full$Total[which(MPO_DF_Full$date %in% after_memorial)], "Labor_Day" = c(MPO_DF_Full$Total[which(MPO_DF_Full$date %in% after_labor)],NA), "NY_Day" = MPO_DF_Full$Total[which(MPO_DF_Full$date %in% after_new)])
+ggplot(data = df, aes(Date)) + geom_line(aes(y = df$Memorial_Day, col = "Memorial Day"), na.rm = T) + geom_line(aes(y = df$Labor_Day, col = "Labor Day"), na.rm = T) + geom_line(aes(y = df$NY_Day, col = "New Years Day"), na.rm = T) + geom_hline(yintercept = mean(MPO_DF_Full$Total, na.rm = T), col = "lightgray") +
+  theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    legend.position = c(.9,.95),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(1, "line"),
+    legend.title = element_text(size = 9),
+    plot.title = element_text(hjust = .5),
+    axis.text.x = element_text(face = "bold", size = 10)
+  ) +
+  labs(title = "Day After Holiday Totals: Location #1", x = "", y = "Total", colour = "Day After") +
+  scale_color_manual(values = c("coral", "cornflowerblue", "darkolivegreen3")) +
+  scale_x_discrete(limits = c(1:10), label = seq(2009,2018,1)) +
+  annotate("text", 11, mean(MPO_DF_Full$Total, na.rm = T), vjust = -1, label = "Mean Total", size = 2.5) +
+  geom_point(y = df$Memorial_Day, size = .9, na.rm = T) +
+  geom_point(y = df$Labor_Day, size = .9, na.rm = T) +
+  geom_point(y = df$NY_Day, size = .9, na.rm = T)
+
+
+df = data.frame("Date" = 1:10, "Memorial_Day" = MPCC_DF_Full$Total[which(MPCC_DF_Full$date %in% after_memorial)], "Labor_Day" = c(MPCC_DF_Full$Total[which(MPCC_DF_Full$date %in% after_labor)],NA), "NY_Day" = MPCC_DF_Full$Total[which(MPCC_DF_Full$date %in% after_new)])
+ggplot(data = df, aes(Date)) + geom_line(aes(y = df$Memorial_Day, col = "Memorial Day"), na.rm = T) + geom_line(aes(y = df$Labor_Day, col = "Labor Day"), na.rm = T) + geom_line(aes(y = df$NY_Day, col = "New Years Day"), na.rm = T) + geom_hline(yintercept = mean(MPCC_DF_Full$Total, na.rm = T), col = "lightgray") +
+  theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    legend.position = c(.9,.95),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(1, "line"),
+    legend.title = element_text(size = 9),
+    plot.title = element_text(hjust = .5),
+    axis.text.x = element_text(face = "bold", size = 10)
+  ) +
+  labs(title = "Day After Holiday Totals: Location #2", x = "", y = "Total", colour = "Day After") +
+  scale_color_manual(values = c("coral", "cornflowerblue", "darkolivegreen3")) +
+  scale_x_discrete(limits = c(1:10), label = seq(2009,2018,1)) +
+  annotate("text", 11, mean(MPCC_DF_Full$Total, na.rm = T), vjust = -1, label = "Mean Total", size = 2.5) +
+  geom_point(y = df$Memorial_Day, size = .9, na.rm = T) +
+  geom_point(y = df$Labor_Day, size = .9, na.rm = T) +
+  geom_point(y = df$NY_Day, size = .9, na.rm = T)
+
+
+df = data.frame("Date" = 1:10, "Memorial_Day" = MPLC_DF_Full$Total[which(MPLC_DF_Full$date %in% after_memorial)], "Labor_Day" = c(MPLC_DF_Full$Total[which(MPLC_DF_Full$date %in% after_labor)],NA), "NY_Day" = MPLC_DF_Full$Total[which(MPLC_DF_Full$date %in% after_new)])
+ggplot(data = df, aes(Date)) + geom_line(aes(y = df$Memorial_Day, col = "Memorial Day"), na.rm = T) + geom_line(aes(y = df$Labor_Day, col = "Labor Day"), na.rm = T) + geom_line(aes(y = df$NY_Day, col = "New Years Day"), na.rm = T) + geom_hline(yintercept = mean(MPLC_DF_Full$Total, na.rm = T), col = "lightgray") +
+  theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    legend.position = c(.9,.95),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(1, "line"),
+    legend.title = element_text(size = 9),
+    plot.title = element_text(hjust = .5),
+    axis.text.x = element_text(face = "bold", size = 10)
+  ) +
+  labs(title = "Day After Holiday Totals: Location #3", x = "", y = "Total", colour = "Day After") +
+  scale_color_manual(values = c("coral", "cornflowerblue", "darkolivegreen3")) +
+  scale_x_discrete(limits = c(1:10), label = seq(2009,2018,1)) +
+  annotate("text", 11, mean(MPLC_DF_Full$Total, na.rm = T), vjust = -1, label = "Mean Total", size = 2.5) +
+  geom_point(y = df$Memorial_Day, size = .9, na.rm = T) +
+  geom_point(y = df$Labor_Day, size = .9, na.rm = T) +
+  geom_point(y = df$NY_Day, size = .9, na.rm = T)
+
+```
+
+
+Plots of yearly totals partitioned monthly for each location -- barplot
+```{r}
+library(imputeTS)
+MPO_bar = ggplot(MPO_DF_Full[which(MPO_DF_Full$date <= "2017-12-31"),], aes( y = na.replace(Total,0), x = as.factor(year(date)))) + geom_bar(stat = "identity", fill = "coral")
+MPO_bar = MPO_bar  + theme(
+  panel.background = element_blank(),
+  plot.title = element_text(hjust = .5)
+) + ggtitle("Location #1 Totals per Year") + ylab("Total") +xlab("")
+
+MPCC_bar = ggplot(MPCC_DF_Full[which(MPO_DF_Full$date <= "2017-12-31"),], aes(y = na.replace(Total,0), x = as.factor(year(date)))) + geom_bar(stat = "identity", fill = "darkturquoise")
+MPCC_bar = MPCC_bar + theme(
+  panel.background = element_blank(),
+    plot.title = element_text(hjust = .5)
+) + ggtitle("Location #2 Totals per Year") + ylab("Total") + ylab("Total") +xlab("")
+
+
+MPLC_bar = ggplot(MPLC_DF_Full[which(MPO_DF_Full$date <= "2017-12-31"),], aes(y = na.replace(Total,0), x = as.factor(year(date)))) + geom_bar(stat = "identity", fill = "darkolivegreen3")
+MPLC_bar = MPLC_bar + theme(
+  panel.background = element_blank(),
+  plot.title = element_text(hjust = .5)
+) + ggtitle("Location #3 Totals per Year") + ylab("Total")+xlab("")
+
+MPO_bar
+MPCC_bar
+MPLC_bar
+```
+
+
+Plot of grand totals -- barplot and boxplot
+```{r}
+library(reshape2)
+
+newDF = data.frame(date = MPO_DF_Full$date[which(year(MPO_DF_Full$date) <= 2017)], mpoT = MPO_DF_Full$Total[which(year(MPO_DF_Full$date) <= 2017)], mpccT = MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) <= 2017)], mplcT = MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) <= 2017)], mpdtT = MPDT_DF_Full$Total[which(year(MPDT_DF_Full$date) <= 2017)])
+
+longdf = melt(newDF, id = c("date"))
+longdf$value[is.na(longdf$value)] = 0
+agDF = aggregate(longdf$value, by = list(cc = longdf$variable, cd = as.yearmon(longdf$date)), FUN = sum)
+
+ggplot(agDF, aes(x = cc)) +
+  geom_bar(aes(x = as.factor(year(cd)), y = x, fill = as.factor(cc)), 
+           stat="identity", width = 0.7)+
+  xlab("") + ylab("Total") +
+  theme(
+    panel.background = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.title = element_text(size = 10),
+    legend.title.align = .5
+  ) +
+  scale_fill_manual(values = c("coral", "darkturquoise", "darkolivegreen3", "orchid2"), name = "Pharmacy", labels = c("Location 1", "Location 2", "Location 3", "Location 4")) +
+  ggtitle("Outpatient Pharmacy Yearly RX Totals")+ theme(
+    plot.title = element_text(hjust = .5, size = 11, face = "bold"),
+    axis.ticks.y = element_blank()
+  ) + scale_y_discrete(limits = c(0, 100000, 200000, 300000), labels = c("0", "100k", "200k", "300k"))
+
+ggplot(agDF, aes(x = cc, y = x)) + geom_boxplot(aes(x = as.factor(year(cd)))) +   ggtitle("RX Outpatient Grand Totals per Year") +
+theme(
+  panel.background = element_blank(),
+  axis.title.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  plot.title = element_text(hjust = .5)
+) + ylab("Total")
+
+library(formattable)
+agDF = aggregate(list(Total = agDF$x), list(Year = year(agDF$cd)), FUN = sum)
+agDF = data.frame(Year = agDF$Year, "RX Grand Total" = agDF$Total)
+agDF %>%
+  mutate(
+  Year = Year,
+  RX.Grand.Total = color_tile("coral3", "chartreuse3")(RX.Grand.Total)) %>%
+  kable("html", escape = F) %>%
+  kable_styling(full_width = F) %>%
+  column_spec(column = 2, bold = T, color = "black")
+  
+```
+
+START-----STATISTICAL COMPARISONS-----START
+
+----MPO
+month
+```{r}
+library(rcompanion)
+library(MASS)
+MPO_november = MPO_DF_Full$Total[which(month(MPO_DF_Full$date) == 11 & year(MPO_DF_Full$date) <= 2016)]
+MPO_june = MPO_DF_Full$Total[which(month(MPO_DF_Full$date) == 6 & year(MPO_DF_Full$date) <= 2016)]
+
+# boxplot(MPO_november, MPO_december, MPO_june)
+# 
+# shapiro.test(MPO_november)
+# shapiro.test(MPO_december)
+# shapiro.test(MPO_june)
+
+wilcox.test(MPO_november, MPO_june, paired = T)
+
+
+```
+
+day
+```{r}
+
+
+MPO_monday = MPO_DF_Full$Total[which(weekdays(MPO_DF_Full$date) == "Monday" & year(MPO_DF_Full$date) >= 2017)]
+MPO_tuesday = MPO_DF_Full$Total[which(weekdays(MPO_DF_Full$date) == "Tuesday"& year(MPO_DF_Full$date) >= 2017)]
+MPO_wednesday = MPO_DF_Full$Total[which(weekdays(MPO_DF_Full$date) == "Wednesday"& year(MPO_DF_Full$date) >= 2017)]
+MPO_thursday = MPO_DF_Full$Total[which(weekdays(MPO_DF_Full$date) == "Thursday"& year(MPO_DF_Full$date) >= 2017)]
+MPO_friday = MPO_DF_Full$Total[which(weekdays(MPO_DF_Full$date) == "Friday"& year(MPO_DF_Full$date) >= 2017)]
+
+# #assess normality; attempt normality with transformations
+# plotNormalHistogram(MPO_monday)
+# plotNormalHistogram(MPO_tuesday)
+# shapiro.test(MPO_monday)
+# shapiro.test(MPO_tuesday)
+# 
+# plotNormalHistogram(sqrt(diff(MPO_monday)))
+# plotNormalHistogram(sqrt(diff(MPO_tuesday)))
+# 
+# shapiro.test(sqrt(diff(MPO_monday)))
+# shapiro.test(sqrt(diff(MPO_tuesday)))
+# 
+# plotNormalHistogram(transformTukey(MPO_monday, plotit = F))
+# plotNormalHistogram(transformTukey(MPO_tuesday, plotit = F))
+
+#use non-parametric paired test
+wilcox.test(MPO_monday, MPO_tuesday, paired = T)
+wilcox.test(MPO_monday, MPO_wednesday, paired = T)
+wilcox.test(MPO_monday[1:80], MPO_thursday, paired = T)
+wilcox.test(MPO_monday[1:80], MPO_friday, paired = T)
+
+wilcox.test(MPO_tuesday, MPO_wednesday, paired = T)
+wilcox.test(MPO_tuesday[1:80], MPO_thursday, paired = T)
+wilcox.test(MPO_tuesday[1:80], MPO_friday, paired = T)
+
+wilcox.test(MPO_wednesday[1:80], MPO_thursday, paired = T)
+wilcox.test(MPO_wednesday[1:80], MPO_friday, paired = T)
+
+wilcox.test(MPO_thursday, MPO_friday, paired = T)
+
+
+
+# par(mfrow = c(3,3))
+# plot(x = MPO_DF_Full$date[which(MPO_DF_Full$day == "Monday")], y = MPO_monday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Mondays", bty = "n", ylim = c(0,350), yaxt = "n")
+# axis(side = 2, at = c(0,150,300))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPO_DF_Full, lines(loess.smooth(MPO_DF_Full$date[which(MPO_DF_Full$day == "Monday")], MPO_monday), col = "blue"))
+# 
+# plot(x = MPO_DF_Full$date[which(MPO_DF_Full$day == "Tuesday")], y = MPO_tuesday, col = "lightgray", xlab = "Year", ylab = "Total", main = " Totals on Tuesdays", bty = "n", ylim = c(0,350), yaxt = "n")
+# axis(side = 2, at = c(0,150,300))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPO_DF_Full, lines(loess.smooth(MPO_DF_Full$date[which(MPO_DF_Full$day == "Tuesday")], MPO_tuesday), col = "blue"))
+# 
+# plot(x = MPO_DF_Full$date[which(MPO_DF_Full$day == "Wednesday")], y = MPO_wednesday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Wednesdays", bty = "n", ylim = c(0,350), yaxt = "n")
+# axis(side = 2, at = c(0,150,300))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPO_DF_Full, lines(loess.smooth(MPO_DF_Full$date[which(MPO_DF_Full$day == "Wednesday")], MPO_wednesday), col = "blue"))
+# 
+# plot(x = MPO_DF_Full$date[which(MPO_DF_Full$day == "Thursday")], y = MPO_thursday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Thursdays", bty = "n", ylim = c(0,350), yaxt = "n")
+# axis(side = 2, at = c(0,150,300))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPO_DF_Full, lines(loess.smooth(MPO_DF_Full$date[which(MPO_DF_Full$day == "Thursday")], MPO_thursday), col = "blue"))
+# 
+# plot(x = MPO_DF_Full$date[which(MPO_DF_Full$day == "Friday")], y = MPO_friday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Fridays", bty = "n", ylim = c(0,350), yaxt = "n")
+# axis(side = 2, at = c(0,150,300))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPO_DF_Full, lines(loess.smooth(MPO_DF_Full$date[which(MPO_DF_Full$day == "Friday")], MPO_friday), col = "blue"))
+
+
+```
+
+```{r}
+mpo_MT = wilcox.test(MPO_monday, MPO_tuesday, paired = T)$p.value
+mpo_MW = wilcox.test(MPO_monday, MPO_wednesday, paired = T)$p.value
+mpo_MTh = wilcox.test(MPO_monday[1:80], MPO_thursday, paired = T)$p.value
+mpo_MF = wilcox.test(MPO_monday[1:80], MPO_friday, paired = T)$p.value
+
+mpo_TW = wilcox.test(MPO_tuesday, MPO_wednesday, paired = T)$p.value
+mpo_TTh = wilcox.test(MPO_tuesday[1:80], MPO_thursday, paired = T)$p.value
+mpo_TF = wilcox.test(MPO_tuesday[1:80], MPO_friday, paired = T)$p.value
+
+mpo_WTh = wilcox.test(MPO_wednesday[1:80], MPO_thursday, paired = T)$p.value
+mpo_WF = wilcox.test(MPO_wednesday[1:80], MPO_friday, paired = T)$p.value
+
+mpo_ThF = wilcox.test(MPO_thursday, MPO_friday, paired = T)$p.value
+
+
+mpo_mat = t(matrix(c("Monday", mpo_MT, mpo_MW, mpo_MTh, mpo_MF, "", "Tuesday", mpo_TW, mpo_TTh, mpo_TF, "", "", "Wednesday", mpo_WTh, mpo_WF, "", "", "", "Thursday", mpo_ThF, paste(""), "", "", "", "Friday"), nrow = 5, ncol = 5))
+rownames(mpo_mat) = colnames(mpo_mat) = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+kable(mpo_mat, format = "html", caption = "Location 1") %>%
+  kable_styling(.,bootstrap_options = "striped")
+```
+
+
+year
+```{r}
+MPO_2015 = MPO_DF_Full[which(year(MPO_DF_Full$date) == 2015),]
+MPO_2016 = MPO_DF_Full[which(year(MPO_DF_Full$date) == 2016),]
+MPO_2017 = MPO_DF_Full[which(year(MPO_DF_Full$date) == 2017),]
+
+
+# plotNormalHistogram(MPO_2015)
+# plotNormalHistogram(MPO_2016)
+# plotNormalHistogram(MPO_2017)
+# 
+# plotNormalHistogram(transformTukey(MPO_2015, plotit = F))
+# plotNormalHistogram(transformTukey(MPO_2016, plotit = F))
+
+MPO_2016_leap = which(MPO_2016$date == "2016-02-29")
+
+wilcox.test(MPO_2015$Total, MPO_2016$Total[-MPO_2016_leap], paired = T)
+wilcox.test(MPO_2016$Total[-MPO_2016_leap], MPO_2017$Total, paired = T)
+
+```
+
+
+----MPCC
+month
+```{r}
+MPCC_november = MPCC_DF_Full$Total[which(month(MPCC_DF_Full$date) == 11 & year(MPCC_DF_Full$date) <= 2017)]
+MPCC_june = MPCC_DF_Full$Total[which(month(MPCC_DF_Full$date) == 6 & year(MPCC_DF_Full$date) <= 2017)]
+
+wilcox.test(MPCC_november, MPCC_june, paired = T)
+```
+
+day
+```{r}
+MPCC_monday = MPCC_DF_Full$Total[which(weekdays(MPCC_DF_Full$date) == "Monday" & year(MPCC_DF_Full$date) >= 2017)]
+MPCC_tuesday = MPCC_DF_Full$Total[which(weekdays(MPCC_DF_Full$date) == "Tuesday"& year(MPCC_DF_Full$date) >= 2017)]
+MPCC_wednesday = MPCC_DF_Full$Total[which(weekdays(MPCC_DF_Full$date) == "Wednesday"& year(MPCC_DF_Full$date) >= 2017)]
+MPCC_thursday = MPCC_DF_Full$Total[which(weekdays(MPCC_DF_Full$date) == "Thursday"& year(MPCC_DF_Full$date) >= 2017)]
+MPCC_friday = MPCC_DF_Full$Total[which(weekdays(MPCC_DF_Full$date) == "Friday"& year(MPCC_DF_Full$date) >= 2017)]
+
+#use non-parametric paired test
+wilcox.test(MPCC_monday, MPCC_tuesday, paired = T)
+wilcox.test(MPCC_monday, MPCC_wednesday, paired = T)
+wilcox.test(MPCC_monday[1:80], MPCC_thursday, paired = T)
+wilcox.test(MPCC_monday[1:80], MPCC_friday, paired = T)
+
+wilcox.test(MPCC_tuesday, MPCC_wednesday, paired = T)
+wilcox.test(MPCC_tuesday[1:80], MPCC_thursday, paired = T)
+wilcox.test(MPCC_tuesday[1:80], MPCC_friday, paired = T)
+
+wilcox.test(MPCC_wednesday[1:80], MPCC_thursday, paired = T)
+wilcox.test(MPCC_wednesday[1:80], MPCC_friday, paired = T)
+
+wilcox.test(MPCC_thursday, MPCC_friday, paired = T)
+
+# par(mfrow = c(3,3))
+# plot(x = MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Monday")], y = MPCC_monday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Mondays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# 
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Monday")], MPO_monday), col = "blue"))
+# 
+# plot(x = MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Tuesday")], y = MPCC_tuesday, col = "lightgray", xlab = "Year", ylab = "Total", main = " Totals on Tuesdays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Tuesday")], MPO_tuesday), col = "blue"))
+# 
+# plot(x = MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Wednesday")], y = MPCC_wednesday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Wednesdays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Wednesday")], MPO_wednesday), col = "blue"))
+# 
+# plot(x = MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Thursday")], y = MPCC_thursday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Thursdays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Thursday")], MPO_thursday), col = "blue"))
+# 
+# plot(x = MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Friday")], y = MPCC_friday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Fridays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Friday")], MPO_friday), col = "blue"))
+```
+
+```{r}
+mpcc_MT = wilcox.test(MPCC_monday, MPCC_tuesday, paired = T)$p.value
+mpcc_MW = wilcox.test(MPCC_monday, MPCC_wednesday, paired = T)$p.value
+mpcc_MTh = wilcox.test(MPCC_monday[1:80], MPCC_thursday, paired = T)$p.value
+mpcc_MF = wilcox.test(MPCC_monday[1:80], MPCC_friday, paired = T)$p.value
+
+mpcc_TW = wilcox.test(MPCC_tuesday, MPCC_wednesday, paired = T)$p.value
+mpcc_TTh = wilcox.test(MPCC_tuesday[1:80], MPCC_thursday, paired = T)$p.value
+mpcc_TF = wilcox.test(MPCC_tuesday[1:80], MPCC_friday, paired = T)$p.value
+
+mpcc_WTh = wilcox.test(MPCC_wednesday[1:80], MPCC_thursday, paired = T)$p.value
+mpcc_WF = wilcox.test(MPCC_wednesday[1:80], MPCC_friday, paired = T)$p.value
+
+mpcc_ThF = wilcox.test(MPCC_thursday, MPCC_friday, paired = T)$p.value
+
+
+mpcc_mat = t(matrix(c("Monday", mpcc_MT, mpcc_MW, mpcc_MTh, mpcc_MF, "", "Tuesday", mpcc_TW, mpcc_TTh, mpcc_TF, "", "", "Wednesday", mpcc_WTh, mpcc_WF, "", "", "", "Thursday", mpcc_ThF, paste(""), "", "", "", "Friday"), nrow = 5, ncol = 5))
+rownames(mpcc_mat) = colnames(mpcc_mat) = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+kable(mpcc_mat, format = "html", caption = "Location 2") %>%
+  kable_styling(.,bootstrap_options = "striped")
+```
+
+
+year
+```{r}
+MPCC_2014 = MPCC_DF_Full[which(year(MPCC_DF_Full$date) == 2014),]
+MPCC_2015 = MPCC_DF_Full[which(year(MPCC_DF_Full$date) == 2015),]
+MPCC_2016 = MPCC_DF_Full[which(year(MPCC_DF_Full$date) == 2016),]
+MPCC_2017 = MPCC_DF_Full[which(year(MPCC_DF_Full$date) == 2017),]
+
+MPCC_2016_leap = which(MPCC_2016$date == "2016-02-29")
+
+wilcox.test(MPCC_2014$Total, MPCC_2015$Total, paired = T)
+wilcox.test(MPCC_2015$Total, MPCC_2016$Total[-MPCC_2016_leap], paired = T)
+wilcox.test(MPCC_2016$Total[-MPCC_2016_leap], MPCC_2017$Total, paired = T)
+```
+
+
+----MPLC
+month
+```{r}
+MPLC_november = MPLC_DF_Full$Total[which(month(MPLC_DF_Full$date) == 11 & year(MPLC_DF_Full$date) <= 2017)]
+MPLC_june = MPLC_DF_Full$Total[which(month(MPLC_DF_Full$date) == 6 & year(MPLC_DF_Full$date) <= 2017)]
+
+wilcox.test(MPLC_november, MPLC_june, paired = T)
+```
+
+day
+```{r}
+MPLC_monday = MPLC_DF_Full$Total[which(weekdays(MPLC_DF_Full$date) == "Monday" & year(MPLC_DF_Full$date) >= 2017)]
+MPLC_tuesday = MPLC_DF_Full$Total[which(weekdays(MPLC_DF_Full$date) == "Tuesday"& year(MPLC_DF_Full$date) >= 2017)]
+MPLC_wednesday = MPLC_DF_Full$Total[which(weekdays(MPLC_DF_Full$date) == "Wednesday"& year(MPLC_DF_Full$date) >= 2017)]
+MPLC_thursday = MPLC_DF_Full$Total[which(weekdays(MPLC_DF_Full$date) == "Thursday"& year(MPLC_DF_Full$date) >= 2017)]
+MPLC_friday = MPLC_DF_Full$Total[which(weekdays(MPLC_DF_Full$date) == "Friday"& year(MPLC_DF_Full$date) >= 2017)]
+
+#use non-parametric paired test
+wilcox.test(MPLC_monday, MPLC_tuesday, paired = T)
+wilcox.test(MPLC_monday, MPLC_wednesday, paired = T)
+wilcox.test(MPLC_monday[1:80], MPLC_thursday, paired = T)
+wilcox.test(MPLC_monday[1:80], MPLC_friday, paired = T)
+
+wilcox.test(MPLC_tuesday, MPLC_wednesday, paired = T)
+wilcox.test(MPLC_tuesday[1:80], MPLC_thursday, paired = T)
+wilcox.test(MPLC_tuesday[1:80], MPLC_friday, paired = T)
+
+wilcox.test(MPLC_wednesday[1:80], MPLC_thursday, paired = T)
+wilcox.test(MPLC_wednesday[1:80], MPLC_friday, paired = T)
+
+wilcox.test(MPLC_thursday, MPLC_friday, paired = T)
+
+
+# par(mfrow = c(3,3))
+# plot(x = MPLC_DF_Full$date[which(MPLC_DF_Full$day == "Monday")], y = MPLC_monday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Mondays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Monday")], MPO_monday), col = "blue"))
+# 
+# plot(x = MPLC_DF_Full$date[which(MPLC_DF_Full$day == "Tuesday")], y = MPLC_tuesday, col = "lightgray", xlab = "Year", ylab = "Total", main = " Totals on Tuesdays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Tuesday")], MPO_tuesday), col = "blue"))
+# 
+# plot(x = MPLC_DF_Full$date[which(MPLC_DF_Full$day == "Wednesday")], y = MPLC_wednesday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Wednesdays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Wednesday")], MPO_wednesday), col = "blue"))
+# 
+# plot(x = MPLC_DF_Full$date[which(MPLC_DF_Full$day == "Thursday")], y = MPLC_thursday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Thursdays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Thursday")], MPO_thursday), col = "blue"))
+# 
+# plot(x = MPLC_DF_Full$date[which(MPLC_DF_Full$day == "Friday")], y = MPLC_friday, col = "lightgray", xlab = "Year", ylab = "Total", main = "Totals on Fridays", bty = "n", ylim = c(0,600), yaxt = "n")
+# axis(side = 2, at = c(0,200,400,600))
+# axis(side = 1, col = "white", labels = NA)
+# #with(MPCC_DF_Full, lines(loess.smooth(MPCC_DF_Full$date[which(MPCC_DF_Full$day == "Friday")], MPO_friday), col = "blue"))
+```
+
+```{r}
+
+mplc_MT = wilcox.test(MPLC_monday, MPLC_tuesday, paired = T)$p.value
+mplc_MW = wilcox.test(MPLC_monday, MPLC_wednesday, paired = T)$p.value
+mplc_MTh = wilcox.test(MPLC_monday[1:80], MPLC_thursday, paired = T)$p.value
+mplc_MF = wilcox.test(MPLC_monday[1:80], MPLC_friday, paired = T)$p.value
+
+mplc_TW = wilcox.test(MPLC_tuesday, MPLC_wednesday, paired = T)$p.value
+mplc_TTh = wilcox.test(MPLC_tuesday[1:80], MPLC_thursday, paired = T)$p.value
+mplc_TF = wilcox.test(MPLC_tuesday[1:80], MPLC_friday, paired = T)$p.value
+
+mplc_WTh = wilcox.test(MPLC_wednesday[1:80], MPLC_thursday, paired = T)$p.value
+mplc_WF = wilcox.test(MPLC_wednesday[1:80], MPLC_friday, paired = T)$p.value
+
+mplc_ThF = wilcox.test(MPLC_thursday, MPLC_friday, paired = T)$p.value
+
+
+mplc_mat = t(matrix(c("Monday", mplc_MT, mplc_MW, mplc_MTh, mplc_MF, "", "Tuesday", mplc_TW, mplc_TTh, mplc_TF, "", "", "Wednesday", mplc_WTh, mplc_WF, "", "", "", "Thursday", mplc_ThF, paste(""), "", "", "", "Friday"), nrow = 5, ncol = 5))
+rownames(mplc_mat) = colnames(mplc_mat) = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+kable(mplc_mat, format = "html", caption = "Location 3") %>%
+  kable_styling(.,bootstrap_options = "striped")
+```
+
+
+year
+```{r}
+MPLC_2014 = MPLC_DF_Full[which(year(MPLC_DF_Full$date) == 2014),]
+MPLC_2015 = MPLC_DF_Full[which(year(MPLC_DF_Full$date) == 2015),]
+MPLC_2016 = MPLC_DF_Full[which(year(MPLC_DF_Full$date) == 2016),]
+MPLC_2017 = MPLC_DF_Full[which(year(MPLC_DF_Full$date) == 2017),]
+
+MPLC_2016_leap = which(MPLC_2016$date == "2016-02-29")
+
+wilcox.test(MPLC_2014$Total, MPLC_2015$Total, paired = T)
+wilcox.test(MPLC_2015$Total, MPLC_2016$Total[-MPLC_2016_leap], paired = T)
+wilcox.test(MPLC_2016$Total[-MPLC_2016_leap], MPLC_2017$Total, paired = T)
+```
+
+END-----STATISTICAL COMPARISONS-----END
+
+
+
+START-----------------------------PREDICTIVE ANALYTICS-----------------------------START
+```{r}
+
+start_2009_2016 =  which(year(MPO_DF_Full$date) == "2017")
+
+#all data -- training data: start of 2009 to end of 2016 --- testing data: 1/1/2017 to 5/31/17
+mpo_train_full = MPO_DF_Full[3:start_2009_2016[1]-1,]  #all the data (minus 2017 and 2018)
+mpo_test_full = MPO_DF_Full[start_2009_2016[1]:start_2009_2016[151],]
+mpo_train_ts_full = ts(mpo_train_full$Total, start = c(2009,1), freq = 365.25)
+mpo_test_ts_full = ts(mpo_test_full$Total, start = c(2017, 1), freq = 365.25)
+
+#partial data -- training data: start of 2014 to end of 2016 --- testing data: 1/1/2017 to 5/31/2017
+mpo_train_part = MPO_DF_Full[which(year(MPO_DF_Full$date) == "2014" | year(MPO_DF_Full$date) == "2015" | year(MPO_DF_Full$date) == "2016"),]
+mpo_test_part = mpo_test_full
+
+mpo_train_ts_part = msts(mpo_train_part$Total, start = c(2014,1), ts.frequency = 365.25, seasonal.periods = c(7, 30.4, 365.25))
+mpo_test_ts_part = msts(mpo_test_part$Total, start = c(2017,1), ts.frequency = 365.25, seasonal.periods = c(7, 30.4, 365.25))
+
+par(mfrow = c(1,2), mar = c(4,3,4,1))
+acf(mpo_train_ts_full, na.action = na.remove)
+pacf(mpo_train_ts_full, na.action = na.remove)
+# 95% confidence interval limits
+# ci <- qnorm((1 + 0.95)/2)/sqrt(sum(!is.na(mpo_train_ts_full)))  
+# acd <- data.frame(lag=acz$lag, acf=acz$acf)
+# ggplot(acd, aes(lag, acf)) + geom_area(fill="grey") +
+#     geom_hline(yintercept=c(ci, -ci), linetype="dashed") +
+#     theme(
+#       panel.background = element_blank(),
+#       plot.title = element_text(hjust = .5),
+#       plot.subtitle = element_text(hjust = .5)
+#     )+
+#   ggtitle("ACF Plot for MPO", subtitle = "95% CI")
+# # plot(stl(mpo_train_ts_full, na.action = na.exclude, s.window = 365.25))
+# # plot(stl(mpo_train_ts_part, na.action = na.exclude, s.window = 365.25))
+
+```
+
+
+```{r}
+#all data -- training data: start of 2009 to end of 2016 --- testing data: 1/1/2017 to 5/31/17
+mpcc_train_full = MPCC_DF_Full[1:start_2009_2016[1]-1,]  #all the data (minus 2017 and 2018)
+mpcc_test_full = MPCC_DF_Full[start_2009_2016[1]:start_2009_2016[151],]
+mpcc_train_ts_full = ts(mpcc_train_full$Total, start = c(2009,1), freq = 365.25)
+mpcc_test_ts_full = ts(mpcc_test_full$Total, start = c(2017, 1), freq = 365.25)
+
+#partial data -- training data: start of 2014 to end of 2016 --- testing data: 1/1/2017 to 5/31/2017
+mpcc_train_part = MPCC_DF_Full[which(year(MPCC_DF_Full$date) == "2014" | year(MPCC_DF_Full$date) == "2015" | year(MPCC_DF_Full$date) == "2016"),]
+mpcc_test_part = mpcc_test_full
+
+mpcc_train_ts_part = ts(mpcc_train_part$Total, start = c(2014,1), freq = 365.25)
+mpcc_test_ts_part = ts(mpcc_test_part$Total, start = c(2017,1), freq = 365.25)
+
+# acz <- acf(mpcc_train_ts_full, plot=F, na.action = na.remove)
+# # 95% confidence interval limits
+# ci <- qnorm((1 + 0.95)/2)/sqrt(sum(!is.na(mpcc_train_ts_full)))  
+# acd <- data.frame(lag=acz$lag, acf=acz$acf)
+# ggplot(acd, aes(lag, acf)) + geom_area(fill="grey") +
+#     geom_hline(yintercept=c(ci, -ci), linetype="dashed") +
+#     theme(
+#       panel.background = element_blank(),
+#       plot.title = element_text(hjust = .5),
+#       plot.subtitle = element_text(hjust = .5)
+#     )+
+#   ggtitle("ACF Plot for MPCC", subtitle = "95% CI")
+# # plot(stl(mpcc_train_ts_full, na.action = na.remove, s.window = 365))
+# # plot(stl(mpcc_train_ts_part, na.action = na.remove, s.window = 365))
+
+par(mfrow = c(1,2), mar = c(4,3,4,1))
+acf(mpcc_train_ts_full, na.action = na.remove)
+pacf(mpcc_train_ts_full, na.action = na.remove)
+
+```
+
+
+```{r}
+#all data -- training data: start of 2009 to end of 2016 --- testing data: 1/1/2017 to 5/31/17
+mplc_train_full = MPLC_DF_Full[1:start_2009_2016[1]-1,]  #all the data (minus 2017 and 2018)
+mplc_test_full = MPLC_DF_Full[start_2009_2016[1]:start_2009_2016[151],]
+mplc_train_ts_full = ts(mplc_train_full$Total, start = c(2009,1), freq = 365.25)
+mplc_test_ts_full = ts(mplc_test_full$Total, start = c(2017, 1), freq = 365.25)
+
+#partial data -- training data: start of 2014 to end of 2016 --- testing data: 1/1/2017 to 5/31/2017
+mplc_train_part = MPLC_DF_Full[which(year(MPLC_DF_Full$date) == "2014" | year(MPLC_DF_Full$date) == "2015" | year(MPLC_DF_Full$date) == "2016"),]
+mplc_test_part = mplc_test_full
+
+mplc_train_ts_part = ts(mplc_train_part$Total, start = c(2014,1), freq = 365.25)
+mplc_test_ts_part = ts(mplc_test_part$Total, start = c(2017,1), freq = 365.25)
+
+# acz <- acf(mplc_train_ts_full, plot=F, na.action = na.remove)
+# # 95% confidence interval limits
+# ci <- qnorm((1 + 0.95)/2)/sqrt(sum(!is.na(mplc_train_ts_full)))  
+# acd <- data.frame(lag=acz$lag, acf=acz$acf)
+# ggplot(acd, aes(lag, acf)) + geom_area(fill="grey") +
+#     geom_hline(yintercept=c(ci, -ci), linetype="dashed") +
+#     theme(
+#       panel.background = element_blank(),
+#       plot.title = element_text(hjust = .5),
+#       plot.subtitle = element_text(hjust = .5)
+#     )+
+#   ggtitle("ACF Plot for MPLC", subtitle = "95% CI")
+# # plot(stl(mplc_train_ts_full, na.action = na.remove, s.window = 365))
+# # plot(stl(mplc_train_ts_part, na.action = na.remove, s.window = 365))
+
+par(mfrow = c(1,2), mar = c(4,3,4,1))
+acf(mplc_train_ts_full, na.action = na.remove)
+pacf(mplc_train_ts_full, na.action = na.remove)
+```
+
+```{r}
+mpo_train_ts_full = na.replace(mpo_train_ts_full, 0)
+mpo_train_ts_part = na.replace(mpo_train_ts_part, 0)
+
+mpcc_train_ts_full = na.replace(mpcc_train_ts_full, 0)
+mpcc_train_ts_part = na.replace(mpcc_train_ts_part, 0)
+
+mplc_train_ts_full = na.replace(mplc_train_ts_full, 0)
+mplc_train_ts_part = na.replace(mplc_train_ts_part, 0)
+```
+
+
+START----------------MPO---------------------
+```{r}
+#FULL
+set.seed(100)
+#Neural Net
+fit1o.f = nnetar(mpo_train_ts_full, lambda = .5, scale.inputs = T)
+fcast1o.f = forecast(fit1o.f, PI = T, h = 151, bootstrap = T)
+#autoplot(fcast1o, include = 151)
+#summary(fcast1o)
+
+#exp smoothing
+fit2o.f = stlf(mpo_train_ts_full, method = "ets")
+fcast2o.f = forecast(fit2o.f, h = 151, bootstrap = T)
+#autoplot(fcast2o.f, include = 151, plot.conf = F)
+#summary(fit2)
+
+#arima
+fit3o.f = stlf(mpo_train_ts_full, method = "arima")
+fcast3o.f = forecast(fit3o.f, h = 151, bootstrap = T)
+#plot(fcast3o, include = 151)
+#summary(fit3o)
+
+#tbats
+MPO_msts = msts(na.replace(mpo_train_full$Total, 0), seasonal.periods = c(7, 30.4, 365.25), start = c(2014,1))
+fit4o.f = tbats(MPO_msts, use.box.cox = T, use.trend = T, seasonal.periods = c(7, 30.4, 365.25))
+fcast4o.f = forecast(fit4o.f, h=151)
+#plot(tbats.components(fit4o))
+
+
+
+#PARTIAL
+#Neural Net
+fit1o.p = nnetar(mpo_train_ts_part, lambda = .5, scale.inputs = T)
+fcast1o.p = forecast(fit1o.p, PI = T, h = 151, bootstrap = T)
+#autoplot(fcast1o, include = 151)
+#summary(fcast1o)
+
+#exp smoothing
+fit2o.p = stlf(mpo_train_ts_part, method = "ets")
+fcast2o.p = forecast(fit2o.p, h = 151, bootstrap = T)
+#autoplot(fcast2o.f, include = 151, plot.conf = F)
+#summary(fit2)
+
+#arima
+fit3o.p = stlf(mpo_train_ts_part, method = "arima")
+fcast3o.p = forecast(fit3o.p, h = 151, bootstrap = T)
+#plot(fcast3o, include = 151)
+#summary(fit3o)
+
+#tbats
+MPO_msts = msts(na.replace(mpo_train_part$Total, 0), seasonal.periods = c(7, 30.4, 365.25), start = c(2014,1))
+fit4o.p = tbats(MPO_msts, use.box.cox = T, use.trend = T, seasonal.periods = c(7, 30.4, 365.25))
+fcast4o.p = forecast(fit4o.p, h=151)
+#plot(tbats.components(fit4o))
+```
+
+```{r}
+#FULL
+MPO_fcasts1f = fcast1o.f
+MPO_fcasts2f = fcast2o.f
+MPO_fcasts3f = fcast3o.f
+MPO_fcasts4f = fcast4o.f
+
+MPO_fcasts1f$mean[which(is.na(mpo_test_full$Total))] = 0
+MPO_fcasts2f$mean[which(is.na(mpo_test_full$Total))] = 0
+MPO_fcasts3f$mean[which(is.na(mpo_test_full$Total))] = 0
+MPO_fcasts4f$mean[which(is.na(mpo_test_full$Total))] = 0
+
+
+autoplot(MPO_fcasts1f, include = 151) + 
+  ggtitle("MPO Total Forecasts: Neural Network", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPO_fcasts2f, include = 151) + 
+  ggtitle("MPO Total Forecasts: Exponential Smoothing", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPO_fcasts3f, include = 151) + 
+  ggtitle("MPO Total Forecasts: ARIMA", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPO_fcasts4f, include = 151) +
+  ggtitle("MPO Total Forecasts: TBATS", subtitle = "(Full data: 2009-1016)")+
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+to_NA = function(cast){
+  cast$mean[which(cast$mean == 0)] = NA
+  return(cast)
+}
+
+MPO_fcasts1f = to_NA(MPO_fcasts1f)
+MPO_fcasts2f = to_NA(MPO_fcasts2f)
+MPO_fcasts3f = to_NA(MPO_fcasts3f)
+MPO_fcasts4f = to_NA(MPO_fcasts4f)
+```
+
+
+```{r}
+#PARTIAL
+MPO_fcasts1p = fcast1o.p
+MPO_fcasts2p = fcast2o.p
+MPO_fcasts3p = fcast3o.p
+MPO_fcasts4p = fcast4o.p
+
+MPO_fcasts1p$mean[which(is.na(mpo_test_part$Total))] = 0
+MPO_fcasts2p$mean[which(is.na(mpo_test_part$Total))] = 0
+MPO_fcasts3p$mean[which(is.na(mpo_test_part$Total))] = 0
+MPO_fcasts4p$mean[which(is.na(mpo_test_part$Total))] = 0
+
+autoplot(MPO_fcasts1p, include = 151) + 
+  ggtitle("MPO Total Forecasts: Neural Network", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPO_fcasts2p, include = 151) + 
+  ggtitle("MPO Total Forecasts: Exponential Smoothing", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPO_fcasts3p, include = 151) + 
+  ggtitle("MPO Total Forecasts: ARIMA", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPO_fcasts4p, include = 151) +
+  ggtitle("MPO Total Forecasts: TBATS", subtitle = "(Partial data: 2014-1016)")+
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+to_NA = function(cast){
+  cast$mean[which(cast$mean == 0)] = NA
+  return(cast)
+}
+
+MPO_fcasts1p = to_NA(MPO_fcasts1p)
+MPO_fcasts2p = to_NA(MPO_fcasts2p)
+MPO_fcasts3p = to_NA(MPO_fcasts3p)
+MPO_fcasts4p = to_NA(MPO_fcasts4p)
+```
+
+
+
+START----------------MPCC---------------------
+```{r}
+#FULL
+set.seed(101)
+#Neural Net
+fit1cc.f = nnetar(mpcc_train_ts_full, lambda = .5, scale.inputs = T)
+fcast1cc.f = forecast(fit1cc.f, PI = T, h = 151, bootstrap = T)
+#autoplot(fcast1o, include = 151)
+#summary(fcast1o)
+
+#exp smoothing
+fit2cc.f = stlf(mpcc_train_ts_full, method = "ets")
+fcast2cc.f = forecast(fit2cc.f, h = 151, bootstrap = T)
+#autoplot(fcast2o.f, include = 151, plot.conf = F)
+#summary(fit2)
+
+#arima
+fit3cc.f = stlf(mpcc_train_ts_full, method = "arima")
+fcast3cc.f = forecast(fit3cc.f, h = 151, bootstrap = T)
+#plot(fcast3o, include = 151)
+#summary(fit3o)
+
+#tbats
+MPCC_msts = msts(na.replace(mpcc_train_full$Total, 0), seasonal.periods = c(7, 30.4, 365.25), start = c(2014,1))
+fit4cc.f = tbats(MPCC_msts, use.box.cox = T)
+fcast4cc.f = forecast(fit4cc.f, h=151)
+#plot(tbats.components(fit4o))
+
+
+
+#PARTIAL
+#Neural Net
+fit1cc.p = nnetar(mpcc_train_ts_part, lambda = .5, scale.inputs = T)
+fcast1cc.p = forecast(fit1cc.p, PI = T, h = 151, bootstrap = T)
+#autoplot(fcast1o, include = 151)
+#summary(fcast1o)
+
+#exp smoothing
+fit2cc.p = stlf(mpcc_train_ts_part, method = "ets")
+fcast2cc.p = forecast(fit2cc.p, h = 151, bootstrap = T)
+#autoplot(fcast2o.f, include = 151, plot.conf = F)
+#summary(fit2)
+
+#arima
+fit3cc.p = stlf(mpcc_train_ts_part, method = "arima")
+fcast3cc.p = forecast(fit3cc.p, h = 151, bootstrap = T)
+#plot(fcast3o, include = 151)
+#summary(fit3o)
+
+#tbats
+MPCC_msts = msts(na.replace(mpcc_train_part$Total, 0), seasonal.periods = c(7, 30.4, 365.25), start = c(2014,1))
+fit4cc.p = tbats(MPCC_msts, use.box.cox = T)
+fcast4cc.p = forecast(fit4cc.p, h=151)
+#plot(tbats.components(fit4o))
+```
+
+```{r}
+#FULL
+MPCC_fcasts1f = fcast1cc.f
+MPCC_fcasts2f = fcast2cc.f
+MPCC_fcasts3f = fcast3cc.f
+MPCC_fcasts4f = fcast4cc.f
+
+mpcc_test_part$Total[149] = NA
+MPCC_fcasts1f$mean[which(is.na(mpcc_test_full$Total))] = 0
+MPCC_fcasts2f$mean[which(is.na(mpcc_test_full$Total))] = 0
+MPCC_fcasts3f$mean[which(is.na(mpcc_test_full$Total))] = 0
+MPCC_fcasts4f$mean[which(is.na(mpcc_test_full$Total))] = 0
+
+
+autoplot(MPCC_fcasts1f, include = 151) + 
+  ggtitle("MPCC Total Forecasts: Neural Network", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPCC_fcasts2f, include = 151) + 
+  ggtitle("MPCC Total Forecasts: Exponential Smoothing", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPCC_fcasts3f, include = 151) + 
+  ggtitle("MPCC Total Forecasts: ARIMA", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPCC_fcasts4f, include = 151) +
+  ggtitle("MPCC Total Forecasts: TBATS", subtitle = "(Full data: 2009-1016)")+
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+to_NA = function(cast){
+  cast$mean[which(cast$mean == 0)] = NA
+  return(cast)
+}
+
+MPCC_fcasts1f = to_NA(MPCC_fcasts1f)
+MPCC_fcasts2f = to_NA(MPCC_fcasts2f)
+MPCC_fcasts3f = to_NA(MPCC_fcasts3f)
+MPCC_fcasts4f = to_NA(MPCC_fcasts4f)
+```
+
+
+```{r}
+#PARTIAL
+MPCC_fcasts1p = fcast1cc.p
+MPCC_fcasts2p = fcast2cc.p
+MPCC_fcasts3p = fcast3cc.p
+MPCC_fcasts4p = fcast4cc.p
+
+MPCC_fcasts1p$mean[which(is.na(mpcc_test_part$Total))] = 0
+MPCC_fcasts2p$mean[which(is.na(mpcc_test_part$Total))] = 0
+MPCC_fcasts3p$mean[which(is.na(mpcc_test_part$Total))] = 0
+MPCC_fcasts4p$mean[which(is.na(mpcc_test_part$Total))] = 0
+
+
+autoplot(MPCC_fcasts1p, include = 151) + 
+  ggtitle("MPCC Total Forecasts: Neural Network", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPCC_fcasts2p, include = 151) + 
+  ggtitle("MPCC Total Forecasts: Exponential Smoothing", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPCC_fcasts3p, include = 151) + 
+  ggtitle("MPCC Total Forecasts: ARIMA", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPCC_fcasts4p, include = 151) +
+  ggtitle("MPCC Total Forecasts: TBATS", subtitle = "(Partial data: 2014-1016)")+
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+to_NA = function(cast){
+  cast$mean[which(cast$mean == 0)] = NA
+  return(cast)
+}
+
+MPCC_fcasts1p = to_NA(MPCC_fcasts1p)
+MPCC_fcasts2p = to_NA(MPCC_fcasts2p)
+MPCC_fcasts3p = to_NA(MPCC_fcasts3p)
+MPCC_fcasts4p = to_NA(MPCC_fcasts4p)
+```
+
+
+
+START----------------MPLC---------------------
+```{r}
+#FULL
+set.seed(102)
+#Neural Net
+fit1lc.f = nnetar(mplc_train_ts_full, lambda = .5, scale.inputs = T)
+fcast1lc.f = forecast(fit1lc.f, PI = T, h = 151, bootstrap = T)
+#autoplot(fcast1o, include = 151)
+#summary(fcast1o)
+
+#exp smoothing
+fit2lc.f = stlf(mplc_train_ts_full, method = "ets")
+fcast2lc.f = forecast(fit2lc.f, h = 151, bootstrap = T)
+#autoplot(fcast2o.f, include = 151, plot.conf = F)
+#summary(fit2)
+
+#arima
+fit3lc.f = stlf(mplc_train_ts_full, method = "arima")
+fcast3lc.f = forecast(fit3lc.f, h = 151, bootstrap = T)
+#plot(fcast3o, include = 151)
+#summary(fit3o)
+
+#tbats
+MPLC_msts = msts(na.replace(mplc_train_full$Total, 0), seasonal.periods = c(7, 30.4, 365.25), start = c(2014,1))
+fit4lc.f = tbats(MPLC_msts, use.box.cox = T, use.trend = T, seasonal.periods = c(7, 30.4, 365.25))
+fcast4lc.f = forecast(fit4lc.f, h=151)
+#plot(tbats.components(fit4o))
+
+
+
+#PARTIAL
+#Neural Net
+fit1lc.p = nnetar(mplc_train_ts_part, lambda = .5, scale.inputs = T)
+fcast1lc.p = forecast(fit1lc.p, PI = T, h = 151, bootstrap = T)
+#autoplot(fcast1o, include = 151)
+#summary(fcast1o)
+
+#exp smoothing
+fit2lc.p = stlf(mplc_train_ts_part, method = "ets")
+fcast2lc.p = forecast(fit2lc.p, h = 151, bootstrap = T)
+#autoplot(fcast2o.f, include = 151, plot.conf = F)
+#summary(fit2)
+
+#arima
+fit3lc.p = stlf(mplc_train_ts_part, method = "arima")
+fcast3lc.p = forecast(fit3lc.p, h = 151, bootstrap = T)
+#plot(fcast3o, include = 151)
+#summary(fit3o)
+
+#tbats
+MPLC_msts = msts(na.replace(mplc_train_part$Total, 0), seasonal.periods = c(7, 30.4, 365.25), start = c(2014,1))
+fit4lc.p = tbats(MPLC_msts, use.box.cox = T, use.trend = T, seasonal.periods = c(7, 30.4, 365.25))
+fcast4lc.p = forecast(fit4lc.p, h=151)
+#plot(tbats.components(fit4o))
+```
+
+```{r}
+#FULL
+MPLC_fcasts1f = fcast1lc.f
+MPLC_fcasts2f = fcast2lc.f
+MPLC_fcasts3f = fcast3lc.f
+MPLC_fcasts4f = fcast4lc.f
+
+MPLC_fcasts1f$mean[which(is.na(mplc_test_full$Total))] = 0
+MPLC_fcasts2f$mean[which(is.na(mplc_test_full$Total))] = 0
+MPLC_fcasts3f$mean[which(is.na(mplc_test_full$Total))] = 0
+MPLC_fcasts4f$mean[which(is.na(mplc_test_full$Total))] = 0
+
+
+autoplot(MPLC_fcasts1f, include = 151) + 
+  ggtitle("MPLC Total Forecasts: Neural Network", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPLC_fcasts2f, include = 151) + 
+  ggtitle("MPLC Total Forecasts: Exponential Smoothing", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPLC_fcasts3f, include = 151) + 
+  ggtitle("MPLC Total Forecasts: ARIMA", subtitle = "(Full data: 2009-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPLC_fcasts4f, include = 151) +
+  ggtitle("MPLC Total Forecasts: TBATS", subtitle = "(Full data: 2009-1016)")+
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+to_NA = function(cast){
+  cast$mean[which(cast$mean == 0)] = NA
+  return(cast)
+}
+
+MPLC_fcasts1f = to_NA(MPLC_fcasts1f)
+MPLC_fcasts2f = to_NA(MPLC_fcasts2f)
+MPLC_fcasts3f = to_NA(MPLC_fcasts3f)
+MPLC_fcasts4f = to_NA(MPLC_fcasts4f)
+```
+
+
+```{r}
+#PARTIAL
+MPLC_fcasts1p = fcast1lc.p
+MPLC_fcasts2p = fcast2lc.p
+MPLC_fcasts3p = fcast3lc.p
+MPLC_fcasts4p = fcast4lc.p
+
+MPLC_fcasts1p$mean[which(is.na(mplc_test_part$Total))] = 0
+MPLC_fcasts2p$mean[which(is.na(mplc_test_part$Total))] = 0
+MPLC_fcasts3p$mean[which(is.na(mplc_test_part$Total))] = 0
+MPLC_fcasts4p$mean[which(is.na(mplc_test_part$Total))] = 0
+
+
+
+autoplot(MPLC_fcasts1p, include = 151) + 
+  ggtitle("MPLC Total Forecasts: Neural Network", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPLC_fcasts2p, include = 151) + 
+  ggtitle("MPLC Total Forecasts: Exponential Smoothing", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPLC_fcasts3p, include = 151) + 
+  ggtitle("MPLC Total Forecasts: ARIMA", subtitle = "(Partial data: 2014-1016)")+ 
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+autoplot(MPLC_fcasts4p, include = 151) +
+  ggtitle("MPLC Total Forecasts: TBATS", subtitle = "(Partial data: 2014-1016)")+
+  theme(
+  panel.background = element_blank()
+  ) +
+  ylab("Total") +
+  xlab("")
+
+to_NA = function(cast){
+  cast$mean[which(cast$mean == 0)] = NA
+  return(cast)
+}
+
+MPLC_fcasts1p = to_NA(MPLC_fcasts1p)
+MPLC_fcasts2p = to_NA(MPLC_fcasts2p)
+MPLC_fcasts3p = to_NA(MPLC_fcasts3p)
+MPLC_fcasts4p = to_NA(MPLC_fcasts4p)
+```
+
+
+```{r}
+
+#FB Prophet
+library(prophet)
+MPO_prophet = data.frame(ds = mpo_train_part$date, y = mpo_train_part$Total)
+MPO_prophet$floor = 0
+fit6 = prophet(MPO_prophet, daily.seasonality = F, weekly.seasonality = T, yearly.seasonality = T)
+futureo = make_future_dataframe(fit6, periods = 151)
+futureo$floor = 0
+fcast6 = predict(fit6, futureo)
+plot(fit6, fcast6)
+prophet_plot_components(fit6, fcast6)
+
+MPCC_prophet = data.frame(ds = mpcc_train_part$date, y = mpcc_train_part$Total)
+MPCC_prophet$floor = 0
+fit7 = prophet(MPCC_prophet, daily.seasonality = F, weekly.seasonality = T, yearly.seasonality = T)
+futurec = make_future_dataframe(fit7, periods = 151)
+futurec$floor = 0
+fcast7 = predict(fit7, futurec)
+plot(fit7, fcast7)
+prophet_plot_components(fit7, fcast7)
+
+MPLC_prophet = data.frame(ds = mplc_train_part$date, y = mplc_train_part$Total)
+MPLC_prophet$floor = 0
+fit8 = prophet(MPLC_prophet, daily.seasonality = F, weekly.seasonality = T, yearly.seasonality = T)
+futurel = make_future_dataframe(fit8, periods = 151)
+futurel$floor = 0
+fcast8 = predict(fit8, futurel)
+plot(fit8, fcast8)
+prophet_plot_components(fit8, fcast8)
+
+mpo_prof_151 = fcast6$yhat[1097:length(fcast6$yhat)]
+mpCC_prof_151 = fcast7$yhat[1097:length(fcast7$yhat)]
+mpLC_prof_151 = fcast8$yhat[1097:length(fcast8$yhat)]
+
+mpo_prof_151[is.na(mpo_test_part$Total)] = NA
+mpCC_prof_151[is.na(mpcc_test_part$Total)] = NA
+mpLC_prof_151[is.na(mplc_test_part$Total)] = NA
+
+```
+
+
+```{r}
+library(MLmetrics)
+
+MPO_model_eval = data.frame("MAPE" = c(
+MAPE(na.remove(MPO_fcasts1f$mean), na.remove(mpo_test_part$Total)),
+MAPE(na.remove(MPO_fcasts1p$mean), na.remove(mpo_test_part$Total)),
+
+MAPE(na.remove(MPO_fcasts2f$mean), na.remove(mpo_test_part$Total)),
+MAPE(na.remove(MPO_fcasts2p$mean), na.remove(mpo_test_part$Total)),
+
+MAPE(na.remove(MPO_fcasts3f$mean), na.remove(mpo_test_part$Total)),
+MAPE(na.remove(MPO_fcasts3p$mean), na.remove(mpo_test_part$Total)),
+
+MAPE(na.remove(MPO_fcasts4f$mean), na.remove(mpo_test_part$Total)),
+MAPE(na.remove(MPO_fcasts4p$mean), na.remove(mpo_test_part$Total)),
+
+MAPE(na.remove(mpo_prof_151), na.remove(mpo_test_part$Total))), 
+
+"RMSE" = c(
+RMSE(na.remove(MPO_fcasts1f$mean), na.remove(mpo_test_part$Total)),
+RMSE(na.remove(MPO_fcasts1p$mean), na.remove(mpo_test_part$Total)),
+
+RMSE(na.remove(MPO_fcasts2f$mean), na.remove(mpo_test_part$Total)),
+RMSE(na.remove(MPO_fcasts2p$mean), na.remove(mpo_test_part$Total)),
+
+RMSE(na.remove(MPO_fcasts3f$mean), na.remove(mpo_test_part$Total)),
+RMSE(na.remove(MPO_fcasts3p$mean), na.remove(mpo_test_part$Total)),
+
+RMSE(na.remove(MPO_fcasts4f$mean), na.remove(mpo_test_part$Total)),
+RMSE(na.remove(MPO_fcasts4p$mean), na.remove(mpo_test_part$Total)),
+
+RMSE(na.remove(mpo_prof_151), na.remove(mpo_test_part$Total))),
+
+row.names = c("NN_full", "NN_partial", "ETS_full", "ETS_partial", "ARIMA_full", "ARIMA_partial", "TBATS_full", "TBATS_partial", "Prophet_partial")
+)
+formattable(MPO_model_eval, list(MAPE = color_tile("lawngreen", "orangered"), RMSE = color_tile("lawngreen", "orangered")))
+```
+
+```{r}
+
+MPCC_model_eval = data.frame("MAPE" = c(
+MAPE(na.remove(MPCC_fcasts1f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+MAPE(na.remove(MPCC_fcasts1p$mean), na.remove(mpcc_test_part$Total)),
+
+MAPE(na.remove(MPCC_fcasts2f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+MAPE(na.remove(MPCC_fcasts2p$mean), na.remove(mpcc_test_part$Total)),
+
+MAPE(na.remove(MPCC_fcasts3f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+MAPE(na.remove(MPCC_fcasts3p$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+
+MAPE(na.remove(MPCC_fcasts4f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+MAPE(na.remove(MPCC_fcasts4p$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+
+MAPE(na.remove(mpCC_prof_151[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)]))), 
+
+"RMSE" = c(
+RMSE(na.remove(MPCC_fcasts1f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+RMSE(na.remove(MPCC_fcasts1p$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+
+RMSE(na.remove(MPCC_fcasts2f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+RMSE(na.remove(MPCC_fcasts2p$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+
+RMSE(na.remove(MPCC_fcasts3f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+RMSE(na.remove(MPCC_fcasts3p$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+
+RMSE(na.remove(MPCC_fcasts4f$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+RMSE(na.remove(MPCC_fcasts4p$mean[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)])),
+
+RMSE(na.remove(mpCC_prof_151[c(2:148, 150:151)]), na.remove(mpcc_test_part$Total[2:length(mpcc_test_part$Total)]))),
+
+row.names = c("NN_full", "NN_partial", "ETS_full", "ETS_partial", "ARIMA_full", "ARIMA_partial", "TBATS_full", "TBATS_partial", "Prophet_partial")
+)
+formattable(MPCC_model_eval, list(MAPE = color_tile("lawngreen", "orangered"), RMSE = color_tile("lawngreen", "orangered")))
+
+```
+
+
+```{r}
+MPLC_model_eval = data.frame("MAPE" = c(
+MAPE(na.remove(MPLC_fcasts1f$mean), na.remove(mplc_test_part$Total)),
+MAPE(na.remove(MPLC_fcasts1p$mean), na.remove(mplc_test_part$Total)),
+
+MAPE(na.remove(MPLC_fcasts2f$mean), na.remove(mplc_test_part$Total)),
+MAPE(na.remove(MPLC_fcasts2p$mean), na.remove(mplc_test_part$Total)),
+
+MAPE(na.remove(MPLC_fcasts3f$mean), na.remove(mplc_test_part$Total)),
+MAPE(na.remove(MPLC_fcasts3p$mean), na.remove(mplc_test_part$Total)),
+
+MAPE(na.remove(MPLC_fcasts4f$mean), na.remove(mplc_test_part$Total)),
+MAPE(na.remove(MPLC_fcasts4p$mean), na.remove(mplc_test_part$Total)),
+
+MAPE(na.remove(mpLC_prof_151), na.remove(mplc_test_part$Total))), 
+
+"RMSE" = c(
+RMSE(na.remove(MPLC_fcasts1f$mean), na.remove(mplc_test_part$Total)),
+RMSE(na.remove(MPLC_fcasts1p$mean), na.remove(mplc_test_part$Total)),
+
+RMSE(na.remove(MPLC_fcasts2f$mean), na.remove(mplc_test_part$Total)),
+RMSE(na.remove(MPLC_fcasts2p$mean), na.remove(mplc_test_part$Total)),
+
+RMSE(na.remove(MPLC_fcasts3f$mean), na.remove(mplc_test_part$Total)),
+RMSE(na.remove(MPLC_fcasts3p$mean), na.remove(mplc_test_part$Total)),
+
+RMSE(na.remove(MPLC_fcasts4f$mean), na.remove(mplc_test_part$Total)),
+RMSE(na.remove(MPLC_fcasts4p$mean), na.remove(mplc_test_part$Total)),
+
+RMSE(na.remove(mpLC_prof_151), na.remove(mplc_test_part$Total))),
+
+row.names = c("NN_full", "NN_partial", "ETS_full", "ETS_partial", "ARIMA_full", "ARIMA_partial", "TBATS_full", "TBATS_partial", "Prophet_partial")
+)
+formattable(MPLC_model_eval, list(MAPE = color_tile("lawngreen", "orangered"), RMSE = color_tile("lawngreen", "orangered")))
+```
+
+
+START----------------PREDICTIONS---------------------------
+```{r}
+library(kableExtra)
+#TBATS partial
+MPO_msts_final = msts(na.replace(MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2014)],0), seasonal.periods = c(7,30.4,365.25), start = c(2014,1))
+MPO_model1 = tbats(MPO_msts_final, use.box.cox = T, use.trend = T, seasonal.periods = c(7, 30.4, 365.25))
+MPO_forecast1 = forecast(MPO_model1, h = 13)
+
+#Prophet
+MPO_model2_DF = data.frame(ds = MPO_DF_Full$date[which(year(MPO_DF_Full$date) >= 2014)], y = MPO_DF_Full$Total[which(year(MPO_DF_Full$date) >= 2014)])
+MPO_model2_DF$floor = 0
+MPO_model2 = prophet(MPO_model2_DF, daily.seasonality = F, weekly.seasonality = T, yearly.seasonality = F)
+MPO_forecast2_DF = make_future_dataframe(MPO_model2, periods = 13)
+MPO_forecast2_DF$floor = 0
+MPO_forecast2 = predict(MPO_model2, MPO_forecast2_DF)
+
+start_here = "2018-07-19"
+end_here = "2018-07-31"
+MPO_Actual_Total = c(170, 149, 36, 0, 152,121,114,91,136,26,0,217,126)
+future_dates = seq(as.Date(start_here), as.Date(end_here), by = "day")
+
+mpo_mat = matrix(c(MPO_forecast1$mean, tail(MPO_forecast2$yhat, 13)), 13, 2)
+mpo_max = apply(mpo_mat, 1, max, na.rm = F)
+
+MPO_forecast1$mean[c(4,11)] = 0
+MPO_forecast2$yhat[c(1664,1671)] = 0
+
+MPO_forecast1_mape = paste0(round(MAPE(MPO_forecast1$mean[c(1:2, 5:9,12,13)], MPO_Actual_Total[c(1:2, 5:9,12,13)]),3)*100, "%", " error")
+MPO_forecast2_mape = paste0(round(MAPE(MPO_forecast2$yhat[c(1661:1662, 1665:1669,1672,1673)], MPO_Actual_Total[c(1:2, 5:9,12,13)]),3)*100, "%", " error")
+MPO_sup_df = data.frame("Date" = format(future_dates,"%a, %b %d, %Y"), "Forecast1" = round(MPO_forecast1$mean,2), "Forecast2" = round(tail(MPO_forecast2$yhat,13),2), "Max" = round(mpo_max,2), "Actual" = MPO_Actual_Total)
+
+MPO_supp_table = MPO_sup_df %>%
+  mutate(
+    Forecast1 = color_tile("olivedrab1", "tomato1")(Forecast1),
+    Forecast2 = color_tile("olivedrab1", "tomato1")(Forecast2)
+  ) %>%
+  kable(escape = F, format = "html", caption = "Location 1") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, font_size = 20) %>%
+  footnote(general = "MAPE per Forecast.  Lower values indcidate better performance.",
+           number = c(
+             paste("Forecast1: ", MPO_forecast1_mape),
+             paste("Forecast2: ", MPO_forecast2_mape),
+             paste("Max: ", paste0(round(MAPE(MPO_sup_df$Max[c(1:2, 5:9, 12:13)], MPO_Actual_Total[c(1:2, 5:9, 12:13)]),3)*100, "%", " error"))
+           )) %>%
+  column_spec(2:3, color = "gray48") %>%
+  column_spec(5, bold = T)
+MPO_supp_table
+
+MPO_supp_table %>%
+  cat(., file = "MPO_supp_table.html")
+```
+
+
+```{r}
+MPCC_msts_final = msts(na.replace(MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2014)],0), seasonal.periods = c(7,30.4,365.25), start = c(2014,1))
+MPCC_model1 = tbats(MPCC_msts_final, use.box.cox = T)
+MPCC_forecast1 = forecast(MPCC_model1, h = 13)
+
+MPCC_model2_DF = data.frame(ds = MPCC_DF_Full$date[which(year(MPCC_DF_Full$date) >= 2014)], y = MPCC_DF_Full$Total[which(year(MPCC_DF_Full$date) >= 2014)])
+MPCC_model2_DF$floor = 0
+MPCC_model2 = prophet(MPCC_model2_DF, daily.seasonality = F, weekly.seasonality = T, yearly.seasonality = T)
+MPCC_forecast2_DF = make_future_dataframe(MPCC_model2, periods = 13)
+MPCC_forecast2_DF$floor = 0
+MPCC_forecast2 = predict(MPCC_model2, MPCC_forecast2_DF)
+
+MPCC_Actual_Total = c(315, 260, 110, 92, 346,265,256,288,286,95,93,321,228)
+
+mpcc_mat = matrix(c(MPCC_forecast1$mean, tail(MPCC_forecast2$yhat, 13)), 13, 2)
+mpcc_max = apply(mpcc_mat, 1, max, na.rm = F)
+
+MPCC_forecast1_mape = paste0(round(MAPE(MPCC_forecast1$mean[c(1:2, 5:9,12,13)], MPCC_Actual_Total[c(1:2, 5:9,12,13)]),3)*100, "%", " error")
+MPCC_forecast2_mape = paste0(round(MAPE(MPCC_forecast2$yhat[c(1661:1662, 1665:1669,1672,1673)], MPCC_Actual_Total[c(1:2, 5:9,12,13)]),3)*100, "%", " error")
+
+MPCC_sup_df = data.frame("Date" = format(future_dates,"%a, %b %d, %Y"), "Forecast1" = round(MPCC_forecast1$mean,2), "Forecast2" = round(tail(MPCC_forecast2$yhat,13),2), "Max" = round(mpcc_max,2), "Actual" = MPCC_Actual_Total)
+
+MPCC_supp_table = MPCC_sup_df %>%
+  mutate(
+    Forecast1 = color_tile("olivedrab1", "tomato1")(Forecast1),
+    Forecast2 = color_tile("olivedrab1", "tomato1")(Forecast2)
+  ) %>%
+  kable(escape = F, format = "html", caption = "Location 2") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, font_size = 20) %>%
+  footnote(general = "MAPE per Forecast.  Lower values indcidate better performance.",
+           number = c(
+             paste("Forecast1: ", MPCC_forecast1_mape),
+             paste("Forecast2: ", MPCC_forecast2_mape),
+             paste("Max: ", paste0(round(MAPE(MPCC_sup_df$Max[c(1:2, 5:9, 12:13)], MPCC_Actual_Total[c(1:2, 5:9, 12:13)]),3)*100, "%", " error"))
+           )) %>%
+  column_spec(2:3, color = "gray48") %>%
+  column_spec(5, bold = T)
+MPCC_supp_table
+
+MPCC_supp_table %>%
+  cat(., file = "MPCC_supp_table.html")
+
+```
+
+
+```{r}
+MPLC_full_ts = ts(na.replace(MPLC_DF_Full$Total,0), start = c(2009,1), freq = 365.25)
+MPLC_model1 = nnetar(MPLC_full_ts, lambda = .5, scale.inputs = T)
+MPLC_forecast1 = forecast(MPLC_model1, h = 13, bootstrap = T)
+
+MPLC_msts_final = msts(na.replace(MPLC_DF_Full$Total,0), seasonal.periods = c(7,30.4,365.25), start = c(2014,1))
+MPLC_model2 = tbats(MPLC_msts_final, use.box.cox = T)
+MPLC_forecast2 = forecast(MPLC_model2, h = 13)
+
+MPLC_model3_DF = data.frame(ds = MPLC_DF_Full$date[which(year(MPLC_DF_Full$date) >= 2014)], y = MPLC_DF_Full$Total[which(year(MPLC_DF_Full$date) >= 2014)])
+MPLC_model3_DF$floor = 0
+MPLC_model3 = prophet(MPLC_model3_DF, daily.seasonality = F, weekly.seasonality = T, yearly.seasonality = T)
+MPLC_forecast3_DF = make_future_dataframe(MPLC_model3, periods = 13)
+MPLC_forecast3_DF$floor = 0
+MPLC_forecast3 = predict(MPLC_model3, MPLC_forecast3_DF)
+
+MPLC_forecast1$mean[c(4,11)] = 0
+MPLC_forecast2$mean[c(4,11)] = 0
+MPLC_forecast3$yhat[c(1664,1671)] = 0
+
+MPLC_Actual_Total = c(307, 339, 41, 0, 427, 315, 320, 353, 312, 65, 0, 503, 364)
+
+mplc_mat = matrix(c(MPLC_forecast1$mean, MPLC_forecast2$mean, tail(MPLC_forecast3$yhat, 13)), 13, 3)
+mplc_max = apply(mplc_mat, 1, max, na.rm = F)
+
+MPLC_forecast1_mape = paste0(round(MAPE(MPLC_forecast1$mean[c(1:2, 5:9,12,13)], MPLC_Actual_Total[c(1:2, 5:9,12,13)]),3)*100, "%", " error")
+MPLC_forecast2_mape = paste0(round(MAPE(MPLC_forecast2$mean[c(1:2, 5:9,12,13)], MPLC_Actual_Total[c(1:2, 5:9,12,13)]),3)*100, "%", " error")
+MPLC_forecast3_mape = paste0(round(MAPE(MPLC_forecast3$yhat[c(1661:1662, 1665:1669,1672,1673)], MPLC_Actual_Total[c(1:2, 5:9,12,13)]),3)*100,"%", " error")
+
+library(kableExtra)
+library(magrittr)
+#MPLC_kable_sup = kable(data.frame("Date" = future_dates, "Day" = weekdays(future_dates), "Forecast1" = MPLC_forecast1$mean, "Forecast2" = MPLC_forecast2$mean, "Forecast3" = tail(MPLC_forecast3$yhat,13), "Actual" = MPLC_Actual_Total), "html")
+
+MPLC_sup_df = data.frame("Date" = format(future_dates,"%a, %b %d, %Y"), "Forecast1" = round(MPLC_forecast1$mean,2), "Forecast2" = round(MPLC_forecast2$mean,2), "Forecast3" = round(tail(MPLC_forecast3$yhat,13),2), "Max" = round(mplc_max,2), "Actual" = MPLC_Actual_Total)
+
+MPLC_supp_table = MPLC_sup_df %>%
+  mutate(
+    Forecast1 = color_tile("olivedrab1", "tomato1")(Forecast1),
+    Forecast2 = color_tile("olivedrab1", "tomato1")(Forecast2),
+    Forecast3 = color_tile("olivedrab1", "tomato1")(Forecast3)
+  ) %>%
+  kable(escape = F, format = "html", caption = "Location 3") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, font_size = 20) %>%
+  footnote(general = "MAPE per Forecast.  Lower values indcidate better performance.",
+           number = c(
+             paste("Forecast1: ", MPLC_forecast1_mape),
+             paste("Forecast2: ", MPLC_forecast2_mape),
+             paste("Forecast3: ", MPLC_forecast3_mape),
+             paste("Max: ", paste0(round(MAPE(MPLC_sup_df$Max[c(1:2, 5:9, 12:13)], MPLC_Actual_Total[c(1:2, 5:9, 12:13)]),3)*100, "%", " error"))
+           )) %>%
+  column_spec(2:4, color = "gray48") %>%
+  column_spec(6, bold = T)
+MPLC_supp_table
+
+MPLC_supp_table %>%
+  cat(., file = "MPLC_supp_table.html")
+```
+
+
+```{r}
+fc = c(250.53, 263.44, 107.97,	81.06, 315.41, 268.93,	252.99, 248.16, 260.70, 115.83, 100.71, 321.93, 286.19)
+MAPE(fc, MPCC_Actual_Total)*100
+```
+

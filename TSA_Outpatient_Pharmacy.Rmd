@@ -22,10 +22,10 @@ library(tseries)
 
 Load data and exploratory analysis
 ```{r}
-MPO = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPO_totals_only.csv")
-MPCC = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPCC_totals_only.csv")
-MPLC = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPLC_totals_only.csv")
-MPDT = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPDT_totals_only.csv")
+MPO = read.csv("MPO_totals_only.csv")
+MPCC = read.csv("MPCC_totals_only.csv")
+MPLC = read.csv("MPLC_totals_only.csv")
+MPDT = read.csv("MPDT_totals_only.csv")
 
 #set to a calendar date format
 MPO$date = as.Date(MPO$Date, format = "%m/%d/%Y")
@@ -44,9 +44,9 @@ MPDT_DF = data.frame("date" = MPDT$Date, "Total" = MPDT$Total)
 
 Load most current data
 ```{r}
-MPO_NEW = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPO_NEW.csv")
-MPCC_NEW = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPCC_NEW.csv")
-MPLC_NEW = read.csv("C:/Users/Joel/Dropbox/Capstone/Data/MPLC_NEW.csv")
+MPO_NEW = read.csv("MPO_NEW.csv")
+MPCC_NEW = read.csv("MPCC_NEW.csv")
+MPLC_NEW = read.csv("MPLC_NEW.csv")
 
 MPO_NEW$Date = as.Date(MPO_NEW$Date, format = "%m/%d/%Y")
 MPO_DF_NEW = data.frame(date = MPO_NEW$Date, Total = MPO_NEW$Total)

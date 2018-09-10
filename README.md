@@ -1,4 +1,4 @@
 # Time Series Analysis Outpatient Pharmacy RX Volume
 The following was submitted as a final research project for a capstone course offered through the M.S. Data Science program at the University of Wisconsin - Eau Claire.
 
-Data on daily prescription volumes (totals) was obtained for three leading outpatient pharmacies in the NWWI and analyzed with descriptive and predictive methods.  Descriptive methods displayed totals over time in multiple perspectives and aggregations to reveal  
+Data on daily prescription volumes (totals) was obtained for three leading outpatient pharmacies in the NWWI and analyzed with descriptive and predictive methods.  Descriptive methods displayed totals over time in multiple figures along with wilcoxon signed rank paired tests to reveal and highlight patterns and trends since 2009.  A neural net, Facebook's "Prophet", and a TBATS model were then fit and assessed to obtain a model offering accurate predictions on totals 2 weeks (13 days) ahead of time.

@@ -5,7 +5,6 @@ Data on daily prescription volumes (totals) was obtained for three leading outpa
 
 Figures, tables, and results are located in the TSA_Outpatient_Pharmacy.md file, while cleaning phases of raw data are cleaning_phase1.py and new data only.py
 
-
 ## Project Contents
 1. Data loading and exploratory analysis
 2. Descriptive analytics and statistical testing

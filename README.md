@@ -3,7 +3,7 @@ The following was submitted as a final research project for a capstone course of
 
 Data on daily prescription volumes (totals) was obtained for three leading outpatient pharmacies in the NWWI and analyzed with descriptive and predictive methods.  Descriptive methods displayed totals over time in multiple figures along with wilcoxon signed rank paired tests to illustrate patterns and trends since 2009.  A neural net, Facebook's "Prophet", and a TBATS model were then fit and assessed to obtain a model offering accurate predictions on totals 2 weeks (13 days) ahead of time.
 
-Figures, tables, and results are located in the TSA_Outpatient_Pharmacy.md file, while cleaning phases of raw data (not provided) are cleaning_phase1.py and new data only.py
+Figures, tables, and results are located in the TSA_Outpatient_Pharmacy.md file, while cleaning phases of raw data are cleaning_phase1.py and new data only.py
 
 
 ## Project Contents

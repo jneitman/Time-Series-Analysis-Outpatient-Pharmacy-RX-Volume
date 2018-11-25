@@ -8,6 +8,6 @@ Data cleansing was carried out prior analysis with cleaning_phase1.py and "new d
 
 ## Project Contents
 1. Data loading and exploratory analysis
-2. Descriptive analytics and statistical testing -- TSA_Outpatient_Pharmacy.md
+2. Descriptive analytics and statistical testing
 3. Predictive analytics
 4. Final predictions

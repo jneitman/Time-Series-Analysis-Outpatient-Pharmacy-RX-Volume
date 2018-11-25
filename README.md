@@ -11,3 +11,5 @@ Data cleansing was carried out prior analysis with cleaning_phase1.py and "new d
 2. Descriptive analytics and statistical testing
 3. Predictive analytics
 4. Final predictions
+
+See TSA_Outpatient_Pharmacy.Rmd for markdown file containing all project components.
